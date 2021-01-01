@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -56,6 +58,7 @@ module SIS
           first_name: row['first_name'],
           last_name: row['last_name'],
           email: row['email'],
+          pronouns: row['pronouns'],
           password: row['password'],
           ssha_password: row['ssha_password'],
           integration_id: row['integration_id'],

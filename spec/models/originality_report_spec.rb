@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2016 - present Instructure, Inc.
 #
@@ -109,6 +111,10 @@ describe OriginalityReport do
 
   it 'returns the state of the originality report' do
     expect(subject.state).to eq 'acceptable'
+  end
+
+  it 'sets root_account using assignment' do
+    expect(subject.root_account).to eq submission.assignment.root_account
   end
 
   describe 'accepts nested attributes for lti link' do
@@ -298,6 +304,20 @@ describe OriginalityReport do
       expect do
         originality_report.copy_to_group_submissions!
       end.to change(OriginalityReport, :count).from(1).to(2)
+    end
+
+    it 'works through class method as well' do
+      expect do
+        OriginalityReport.copy_to_group_submissions!(report_id: originality_report.id, user_id: user_one.id)
+      end.to change(OriginalityReport, :count).from(1).to(2)
+    end
+
+    it 'does not explode if the report for a TEST STUDENT is gone' do
+      expect do
+        # because if the user doesn't exist anymore, it was a test student
+        # that got destroyed.
+        OriginalityReport.copy_to_group_submissions!(report_id: -1, user_id: -1)
+      end.to_not raise_error
     end
 
     it 'replaces originality reports that have the same attachment/submission combo' do

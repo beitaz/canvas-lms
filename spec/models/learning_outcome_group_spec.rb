@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -26,7 +28,7 @@ describe LearningOutcomeGroup do
   end
 
   def long_text(max = 65535)
-    text = ''
+    text = +''
     (0...max+1).each do |num|
       text.concat(num.to_s)
     end
@@ -279,6 +281,23 @@ describe LearningOutcomeGroup do
       expect(group1.workflow_state).to eq('deleted')
       expect(active_child_outcomes).to be_empty
       expect(active_child_groups).to be_empty
+    end
+  end
+
+  context 'root account resolution' do
+    it 'sets root_account_id using Account context' do
+      group = LearningOutcomeGroup.create!(title: 'group', context: Account.default)
+      expect(group.root_account).to eq Account.default
+    end
+
+    it 'sets root_account_id using Course context' do
+      group = @course.learning_outcome_groups.create!(title: 'group')
+      expect(group.root_account).to eq @course.root_account
+    end
+
+    it 'sets root_acount_id 0 when global (context is nil)' do
+      group = LearningOutcomeGroup.create!(title: 'group', context_id: nil)
+      expect(group.root_account_id).to eq 0
     end
   end
 end

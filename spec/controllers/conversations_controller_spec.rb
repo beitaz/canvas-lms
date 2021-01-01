@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -195,6 +197,18 @@ describe ConversationsController do
         expect(@user.unread_conversations_count).to eq 0
       end
     end
+
+    context "starred conversations" do
+      it "returns starred conversations with no received messages" do
+        course_with_student_logged_in(:active_all => true)
+        conv = @user.initiate_conversation([])
+        conv.update(starred: true, message_count: 1)
+
+        get 'index', params: {:scope => 'starred'}, :format => 'json'
+        expect(response).to be_successful
+        expect(assigns[:conversations_json].size).to be 1
+      end
+    end
   end
 
   describe "GET 'show'" do
@@ -333,6 +347,14 @@ describe ConversationsController do
       expect(assigns[:conversation].messages.first.forwarded_message_ids).to eql(@conversation.messages.first.id.to_s)
     end
 
+    it "allows Observers to message linked students" do
+      observer = user_with_pseudonym
+      add_linked_observer(@student, observer, root_account: @course.root_account)
+      user_session(observer)
+      post 'create', params: { recipients: [@student.id.to_s], body: "Hello there", context_code: @course.asset_string }
+      expect(response).to be_successful
+    end
+
     context "group conversations" do
       before :once do
         @old_count = Conversation.count
@@ -376,7 +398,7 @@ describe ConversationsController do
         json.each do |conv|
           conversation = Conversation.find(conv['id'])
           conversation.conversation_participants.each do |cp|
-            expect(cp.root_account_ids).to eq @account_id.to_s
+            expect(cp.root_account_ids).to eq [@account_id]
           end
         end
       end
@@ -389,7 +411,7 @@ describe ConversationsController do
         json.each do |conv|
           conversation = Conversation.find(conv['id'])
           conversation.conversation_participants.each do |cp|
-            expect(cp.root_account_ids).to eq @account_id.to_s
+            expect(cp.root_account_ids).to eq [@account_id]
           end
         end
       end
@@ -490,6 +512,28 @@ describe ConversationsController do
       it "should create user notes" do
         post 'create', params: { recipients: @students.map(&:id), body: "yo", subject: "greetings", user_note: '1' }
         @students.each{|x| expect(x.user_notes.size).to be(1)}
+      end
+
+      it "should include the domain root account in the user note" do
+        post "create", params: { recipients: @students.map(&:id), body: "hi there", subject: "hi there", user_note: true }
+        note = UserNote.last
+        expect(note.root_account_id).to eql Account.default.id
+      end
+    end
+
+    describe "for recipients the sender has no relationship with" do
+      it "should fail" do
+        user_session(@student)
+        post 'create', params: { recipients: [User.create.id.to_s], body: "foo" }
+        expect(response.status).to eq 400
+      end
+
+      context "as a siteadmin user with send_messages grants" do
+        it "should succeed" do
+          user_session(site_admin_user)
+          post 'create', params: { recipients: [User.create.id.to_s], body: "foo" }
+          expect(response.status).to eq 201
+        end
       end
     end
   end

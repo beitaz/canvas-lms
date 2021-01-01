@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -37,6 +39,96 @@ class Notification < ActiveRecord::Base
 
     # Testing
     "Show In Feed",
+  ].freeze
+
+  ALLOWED_SMS_NOTIFICATION_CATEGORIES = [
+    'announcement',
+    'grading'
+  ].freeze
+
+  ALLOWED_SMS_NOTIFICATION_TYPES = [
+    'Assignment Graded',
+    'Confirm SMS Communication Channel',
+    'New Announcement',
+    'Submission Grade Changed',
+    'Submission Graded'
+  ].freeze
+
+  ALLOWED_PUSH_NOTIFICATION_CATEGORIES = [
+    "all_submissions",
+    "announcement_created_by_you",
+    "calendar",
+    "due_date",
+    "course_content",
+    "appointment_cancelations",
+    "student_appointment_signups",
+    "appointment_availability",
+    "conversation_message",
+    "submission_comment",
+    "grading",
+    "announcement",
+    "invitation"
+  ].freeze
+
+  ALLOWED_PUSH_NOTIFICATION_TYPES = [
+    "New Announcement",
+    "Assignment Created",
+    "New Event Created",
+    "Submission Graded",
+    "Assignment Due Date Changed",
+    "Conversation Message",
+    "Web Conference Invitation",
+    "Event Date Changed",
+    "Submission Comment",
+    "Appointment Group Published",
+    "Submission Needs Grading",
+    "Submission Comment For Teacher",
+    "Submission Grade Changed",
+    "Assignment Changed",
+    "Appointment Group Updated",
+    "Annotation Notification",
+    "Appointment Group Deleted",
+    "Assignment Due Date Override Changed",
+    "Peer Review Invitation",
+    "Announcement Reply",
+    "Rubric Assessment Submission Reminder",
+    "Collaboration Invitation",
+    "Appointment Canceled By User",
+    "Upcoming Assignment Alert",
+    "Annotation Teacher Notification",
+    "Assignment Unmuted",
+    "Quiz Regrade Finished",
+    "Appointment Deleted For User",
+  ].freeze
+
+  COURSE_TYPES = [
+    # Course Activities
+    'Due Date',
+    'Grading Policies',
+    'Course Content',
+    'Files',
+    'Announcement',
+    'Announcement Created By You',
+    'Grading',
+    'Invitation',
+    'All Submissions',
+    'Late Grading',
+    'Submission Comment',
+    'Blueprint',
+
+    # Discussions
+    'Discussion',
+    'DiscussionEntry',
+
+    # Scheduling
+    'Student Appointment Signups',
+    'Appointment Signups',
+    'Appointment Cancelations',
+    'Appointment Availability',
+    'Calendar',
+
+    # Conferences
+    'Recording Ready'
   ].freeze
 
   FREQ_IMMEDIATELY = 'immediately'
@@ -151,32 +243,44 @@ class Notification < ActiveRecord::Base
      TYPES_TO_SHOW_IN_FEED
   end
 
-  def self.categories_to_send_in_sms
-    Setting.get('allowed_sms_notification_categories', 'announcement,grading').split(',')
+  def self.categories_to_send_in_sms(root_account)
+    root_account.settings[:allowed_sms_notification_categories] || Setting.get('allowed_sms_notification_categories', ALLOWED_SMS_NOTIFICATION_CATEGORIES.join(',')).split(',')
   end
 
-  def self.types_to_send_in_sms
-    Setting.get('allowed_sms_notification_types', 'Assignment Graded,Confirm SMS Communication Channel,New Announcement,Submission Grade Changed,Submission Graded').split(',')
+  def self.types_to_send_in_sms(root_account)
+    root_account.settings[:allowed_sms_notification_types] || Setting.get('allowed_sms_notification_types', ALLOWED_SMS_NOTIFICATION_TYPES.join(',')).split(',')
+  end
+
+  def self.categories_to_send_in_push
+    Setting.get('allowed_push_notification_categories', ALLOWED_PUSH_NOTIFICATION_CATEGORIES.join(',')).split(',')
+  end
+
+  def self.types_to_send_in_push
+    Setting.get('allowed_sms_notification_types', ALLOWED_PUSH_NOTIFICATION_TYPES.join(',')).split(',')
   end
 
   def show_in_feed?
     self.category == "TestImmediately" || Notification.types_to_show_in_feed.include?(self.name)
   end
 
+  def is_course_type?
+    COURSE_TYPES.include? self.category
+  end
+
   def registration?
-    return self.category == "Registration"
+    self.category == "Registration"
   end
 
   def migration?
-    return self.category == "Migration"
+    self.category == "Migration"
   end
 
   def summarizable?
-    return !self.registration? && !self.migration?
+    !self.registration? && !self.migration?
   end
 
   def dashboard?
-    return ["Migration", "Registration", "Summaries", "Alert"].include?(self.category) == false
+    ["Migration", "Registration", "Summaries", "Alert"].exclude?(self.category)
   end
 
   def category_slug
@@ -199,7 +303,7 @@ class Notification < ActiveRecord::Base
 
   # Return a hash with information for a related user option if one exists.
   def related_user_setting(user, root_account)
-    if self.category == 'Grading' && root_account.settings[:allow_sending_scores_in_emails] != false
+    if user.present? && self.category == 'Grading' && root_account.settings[:allow_sending_scores_in_emails] != false
       {
         name: :send_scores_in_emails,
         value: user.preferences[:send_scores_in_emails],
@@ -295,6 +399,8 @@ class Notification < ActiveRecord::Base
     t 'names.manually_created_access_token_created', 'Manually Created Access Token Created'
     t 'names.account_user_notification', 'Account User Notification'
     t 'names.account_user_registration', 'Account User Registration'
+    t 'Annotation Notification'
+    t 'Annotation Teacher Notification'
     t 'names.assignment_changed', 'Assignment Changed'
     t 'names.assignment_created', 'Assignment Created'
     t 'names.assignment_due_date_changed', 'Assignment Due Date Changed'
@@ -367,6 +473,7 @@ class Notification < ActiveRecord::Base
     t 'names.blueprint_content_added', 'Blueprint Content Added'
     t 'names.content_link_error', 'Content Link Error'
     t 'names.account_notification', 'Account Notification'
+    t 'names.upcoming_assignment_alert', 'Upcoming Assignment Alert'
   end
 
   # TODO: i18n ... show these anywhere we show the category today

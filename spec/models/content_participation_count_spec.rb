@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -61,6 +63,11 @@ describe ContentParticipationCount do
       ContentParticipationCount.where(:id => cpc).update_all(:updated_at => time)
       ContentParticipationCount.create_or_update(:context => @course, :user => @student, :content_type => "Submission")
       expect(cpc.reload.updated_at.to_i).to eq time.to_i
+    end
+
+    it "should correctly set root_account_id from course" do
+      cpc = ContentParticipationCount.create_or_update(:context => @course, :user => @student, :content_type => "Submission")
+      expect(cpc.root_account_id).to eq(@course.root_account_id)
     end
   end
 

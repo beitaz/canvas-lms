@@ -22,14 +22,18 @@
   @show_left_side = true
   @collapse_course_menu = true
   @show_embedded_chat = false
+
   css_bundle :slickgrid, :gradebook
   js_bundle :gradebook
 %>
-<div id="keyboard_navigation"></div>
+<% unless @current_user.try(:prefers_no_keyboard_shortcuts?) %>
+  <div id="keyboard_navigation"></div>
+<% end %>
+
 <div id="gradebook_wrapper">
   <h1 class="screenreader-only"><%= t('Gradebook') %></h1>
-  <div class="assignment-gradebook-container hidden">
 
+  <div class="assignment-gradebook-container">
     <div class="accessibility_warning">
       <%= link_to t('Warning: For improved accessibility, please click here to use the Individual View Gradebook.'),
       context_url(@context, :change_gradebook_version_context_gradebook_url, :version => "srgb"),
@@ -44,10 +48,12 @@
       </div>
 
       <div id="gradebook-actions">
-        <button id="keyboard-shortcuts" class="Button--icon-action Button--active" type="button">
-          <span class="screenreader-only"><%= t('Keyboard Shortcuts') %></span>
-          <i class="icon-keyboard-shortcuts"></i>
-        </button>
+        <% unless @current_user.try(:prefers_no_keyboard_shortcuts?) %>
+          <button id="keyboard-shortcuts" class="Button--icon-action Button--active" type="button">
+            <span class="screenreader-only"><%= t('Keyboard Shortcuts') %></span>
+            <i class="icon-keyboard-shortcuts"></i>
+          </button>
+        <% end %>
 
         <% if multiple_assignment_groups? %>
             <div class="gradebook-filter-container" id="assignment-group-filter-container"></div>
@@ -96,16 +102,6 @@
     </div>
   </div>
 
-  <% if @context.feature_enabled?(:outcome_gradebook) %>
-    <div class="outcome-gradebook-container">
-      <div class="outcome-menus hidden" style="text-align: <%= direction('right') %>;">
-        <span data-component="SectionFilter"></span>
-        <span data-component="GradebookMenu" data-variant="DefaultGradebookLearningMastery"></span>
-      </div>
-      <div class="outcome-gradebook hidden"></div>
-      <div id="outcome-gradebook-paginator" class="hidden" style="height: 2.375em"></div>
-    </div>
-  <% end %>
   <span data-component="GridColor"></span>
   <span data-component="StatusesModal"></span>
   <span data-component="AnonymousSpeedGraderAlert"></span>

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -27,6 +29,7 @@ class UserService < ActiveRecord::Base
   before_save :infer_defaults
   after_save :assert_relations
   after_save :touch_user
+  after_save :clear_cache_key
 
   def should_have_communication_channel?
     [CommunicationChannel::TYPE_TWITTER].include?(service) && self.user
@@ -44,6 +47,10 @@ class UserService < ActiveRecord::Base
       UserService.where(:user_id => self.user_id, :service => self.service).where("id<>?", self).delete_all
     end
     true
+  end
+
+  def clear_cache_key
+    self.user.clear_cache_key(:user_services)
   end
 
   def assert_communication_channel

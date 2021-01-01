@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2014 Instructure, Inc.
 #
@@ -125,6 +127,12 @@ module Lti
         expect(response.status).to eq 200
         expect(json.count).to eq 1
         expect(json.detect {|j| j['definition_type'] == resource_tool.class.name && j['definition_id'] == resource_tool.id}).not_to be_nil
+      end
+
+      it 'cannot get the definition of public stuff at the account level' do
+        json = api_call(:get, "/api/v1/accounts/self/lti_apps/launch_definitions",
+          {controller: 'lti/lti_apps', action: 'launch_definitions', format: 'json', account_id: 'self', placements: %w(global_navigation)})
+        expect(response.status).to eq 401
       end
 
       it 'public can not get definition for tool with members visibility' do
@@ -264,6 +272,33 @@ module Lti
             json
           end
         end
+      end
+    end
+
+    describe '#index on root account' do
+      let(:tool) { new_valid_external_tool(account, true) }
+      let(:params) do
+        {
+          controller: 'lti/lti_apps',
+          action: 'index',
+          format: 'json',
+          account_id: account.id
+        }
+      end
+      subject { api_call(:get, "/api/v1/accounts/#{account.id}/lti_apps", params) }
+
+      it "includes is_rce_favorite when applicable" do
+        account_admin_user(account: account)
+        tool.editor_button = {url: "http://example.com", icon_url: "http://example.com"}
+        tool.is_rce_favorite = true
+        tool.save!
+        expect(subject[0]["is_rce_favorite"]).to be true
+      end
+
+      it "does not include is_rce_favorite when not applicable" do
+        account_admin_user(account: account)
+        tool
+        expect(subject[0].has_key?("is_rce_favorite")).to be false
       end
     end
   end

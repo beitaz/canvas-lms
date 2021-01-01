@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -77,6 +79,63 @@ describe "Gradebook" do
       expect(f('.gradebook-cell', cell)).to include_text '10'
       cell.click
       expect(Gradebook::Cells.grading_cell_input(@student_1, @first_assignment)).not_to be_blank
+    end
+  end
+
+  context 'view ungraded as 0' do
+
+    before(:each) do
+      Account.site_admin.enable_feature!(:view_ungraded_as_zero)
+      Gradebook.visit(@course)
+    end
+
+    it 'persists its value when changed in the View menu' do
+      Gradebook.select_view_dropdown
+      Gradebook.select_view_ungraded_as_zero
+      Gradebook.select_view_dropdown
+
+      expect(Gradebook.view_ungraded_as_zero).to contain_css("svg[name='IconCheck']")
+
+      driver.navigate.refresh
+      Gradebook.select_view_dropdown
+
+      expect(Gradebook.view_ungraded_as_zero).to contain_css("svg[name='IconCheck']")
+    end
+
+    it 'toggles the presence of "Ungraded as 0" in the Total grade column header' do
+      expect(Gradebook.assignment_header_cell_element('Total').text).not_to include('Ungraded as 0')
+
+      Gradebook.select_view_dropdown
+      Gradebook.select_view_ungraded_as_zero
+
+      expect(Gradebook.assignment_header_cell_element('Total').text).to include('Ungraded as 0')
+    end
+
+    it 'toggles the presence of "Ungraded as 0" in assignment group grade column header' do
+      expect(Gradebook.assignment_header_cell_element('first assignment group').text).not_to include('Ungraded as 0')
+
+      Gradebook.select_view_dropdown
+      Gradebook.select_view_ungraded_as_zero
+
+      expect(Gradebook.assignment_header_cell_element('first assignment group').text).to include('Ungraded as 0')
+    end
+
+    it 'toggles which version of the total grade is displayed for a student' do
+      expect(Gradebook::Cells.get_total_grade(@student_1)).to eq "100% A"
+
+      Gradebook.select_view_dropdown
+      Gradebook.select_view_ungraded_as_zero
+
+      expect(Gradebook::Cells.get_total_grade(@student_1)).to eq "18.75% F"
+    end
+
+    it 'does not change the grades in the backend' do
+      expect(Gradebook.scores_api(@course).first[:score]).to eq 100.0
+
+      Gradebook.select_view_dropdown
+      Gradebook.select_view_ungraded_as_zero
+
+      expect(Gradebook.scores_api(@course).first[:score]).to eq 100.0
     end
   end
 
@@ -172,45 +231,7 @@ describe "Gradebook" do
   end
 
   context "downloading and uploading submissions" do
-    it "updates the dropdown menu after downloading and processes submission uploads", test_id: 3253285, priority: "1" do
-      # Given I have a student with an uploaded submission
-      a = attachment_model(context: @student_2, content_type:'text/plain')
-      @first_assignment.submit_homework(@student_2, submission_type: 'online_upload', attachments: [a])
-
-      # When I go to the gradebook
-      Gradebook.visit(@course)
-
-      # chrome fails to find the download submissions link because it does not fit normal screen
-
-
-      # And I click the download submissions button
-      Gradebook.click_assignment_header_menu_element(@first_assignment.id,"download submissions")
-
-      # And I close the download submissions dialog
-      fj("div:contains('Download Assignment Submissions'):first .ui-dialog-titlebar-close").click
-
-      # And I click the dropdown menu on the assignment again
-      Gradebook.click_assignment_header_menu(@first_assignment.id)
-
-      # And I click the re-upload submissions link
-      f('[data-menu-item-id="reupload-submissions"]').click
-
-      # When I attach a submissions zip file
-      fixture_file = Rails.root.join('spec', 'fixtures', 'files', 'submissions.zip')
-      f('input[name=submissions_zip]').send_keys(fixture_file)
-
-      # And I upload it
-      expect_new_page_load do
-        fj('button:contains("Upload Files")').click
-      end
-
-      # Then I should see a message indicating the file was processed
-      expect(f('#content h3')).to include_text 'Attached files to the following user submissions'
-    end
-
     it "redirects to the submissions upload page after uploading submissions" do
-      Account.site_admin.enable_feature!(:submissions_reupload_status_page)
-
       # Given I have a student with an uploaded submission
       a = attachment_model(context: @student_2, content_type:'text/plain')
       @first_assignment.submit_homework(@student_2, submission_type: 'online_upload', attachments: [a])

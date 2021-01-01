@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -783,6 +785,99 @@ describe 'Submissions API', type: :request do
     expect(comment_json['author_id']).to be_nil
     expect(comment_json['author_name']).to match(/Anonymous/)
     expect(comment_json['author']).to be_empty
+  end
+
+  it 'does not return submitter info when anonymous grading is on' do
+    submitter = student_in_course({ :active_all => true }).user
+
+    assignment = assignment_model(course: @course)
+    assignment.update_attribute(:anonymous_grading, true)
+    expect(assignment.reload.anonymous_grading?).to be_truthy
+
+    submission = assignment.submit_homework(submitter, body: "Anon Submission")
+    submission_comment = submission.add_comment({
+      author: submitter,
+      comment: "Anon Comment"
+    })
+
+    @user = teacher_in_course({ :active_all => true }).user
+    url = "/api/v1/courses/#{@course.id}/assignments/#{assignment.id}/submissions"
+    json = api_call(:get, url, {
+      :controller => 'submissions_api',
+      :action => 'index',
+      :format => 'json',
+      :course_id => @course.to_param,
+      :assignment_id => assignment.to_param
+    }, {
+      :include => %w(user, submission_comments)
+    })
+
+    expect(json.first['user']).to be_nil
+    comment_json = json.first['submission_comments'].first
+    expect(comment_json['author_id']).to be_nil
+    expect(comment_json['author_name']).to match(/Anonymous/)
+    expect(comment_json['author']).to be_empty
+  end
+
+  it "loads discussion entry data" do
+    @student = user_factory(active_all: true)
+    course_with_teacher(:active_all => true)
+    @course.enroll_student(@student).accept!
+    @context = @course
+    @assignment = factory_with_protected_attributes(@course.assignments, {:title => 'assignment1', :submission_types => 'discussion_topic', :discussion_topic => discussion_topic_model})
+
+    e1 = @topic.discussion_entries.create!(:message => 'main entry', :user => @user)
+    se1 = @topic.discussion_entries.create!(:message => 'sub 1', :user => @student, :parent_entry => e1)
+    @assignment.submit_homework(@student, :submission_type => 'discussion_topic')
+    se2 = @topic.discussion_entries.create!(:message => 'student 1', :user => @student)
+    @assignment.submit_homework(@student, :submission_type => 'discussion_topic')
+    @topic.discussion_entries.create!(:message => 'another entry', :user => @user)
+
+    json = api_call(:get,
+      "/api/v1/courses/#{@course.id}/students/submissions.json",
+      { :controller => 'submissions_api', :action => 'for_students',
+        :format => 'json', :course_id => @course.to_param },
+      { :student_ids => [@student.to_param] })
+    expect(json.first["discussion_entries"]).to be_present
+  end
+
+  it "loads quiz submission data" do
+    course_with_teacher(:active_all => true)
+    quiz_with_submission
+    @user = @teacher
+
+    #grouped
+    json = api_call(:get,
+      "/api/v1/courses/#{@course.id}/students/submissions.json",
+      { :controller => 'submissions_api', :action => 'for_students',
+        :format => 'json', :course_id => @course.to_param },
+      { :student_ids => [@student.to_param], :include => %w(submission_history), :grouped => 1 })
+    expect(json.first["submissions"].first["submission_history"]).to be_present
+
+    # ungrouped
+    json = api_call(:get,
+      "/api/v1/courses/#{@course.id}/students/submissions.json",
+      { :controller => 'submissions_api', :action => 'for_students',
+        :format => 'json', :course_id => @course.to_param },
+      { :student_ids => [@student.to_param], :include => %w(submission_history) })
+
+    expect(json.first["submission_history"]).to be_present
+  end
+
+  it "loads attachment data" do
+    @student = user_factory(active_all: true)
+    course_with_teacher(:active_all => true)
+    @course.enroll_student(@student).accept!
+    a1 = @course.assignments.create!(:title => 'assignment1', :grading_type => 'letter_grade', :points_possible => 15)
+    submit_homework(a1, @student) { |s| s.attachments = [attachment_model(:uploaded_data => stub_png_data, :content_type => 'image/png', :context => @student)] }
+
+    json = api_call(:get,
+      "/api/v1/courses/#{@course.id}/students/submissions.json",
+      { :controller => 'submissions_api', :action => 'for_students',
+        :format => 'json', :course_id => @course.to_param },
+      { :student_ids => [@student.to_param] })
+
+    expect(json.first["attachments"]).to be_present
   end
 
   it "returns comment id along with submission comments" do
@@ -1694,7 +1789,6 @@ describe 'Submissions API', type: :request do
       let(:student1_sub) { assignment.submissions.find_by(user: @student1) }
 
       before(:each) do
-        @course.root_account.enable_feature!(:allow_postable_submission_comments)
         assignment.ensure_post_policy(post_manually: true)
       end
 
@@ -1710,11 +1804,6 @@ describe 'Submissions API', type: :request do
           },
           params
         ).first
-      end
-
-      it "is not included when allow_postable_submission_comments feature is not enabled" do
-        @course.root_account.disable_feature!(:allow_postable_submission_comments)
-        expect(student_json.fetch("submissions").first).not_to have_key "has_postable_comments"
       end
 
       it "is not included when params[:grouped] is not present" do
@@ -4141,7 +4230,7 @@ describe 'Submissions API', type: :request do
         })
       end
 
-      it "copys files to the submissions folder if they're not there already" do
+      it "copies files to the submissions folder if they're not there already" do
         @assignment.update(:submission_types => 'online_upload')
         a1 = attachment_model(:context => @user, :folder => @user.submissions_folder)
         a2 = attachment_model(:context => @user)
@@ -4479,7 +4568,7 @@ describe 'Submissions API', type: :request do
     expect(json[0]["attachments"][0]["canvadoc_document_id"]).to eq canvadoc_document_id
   end
 
-  it "includes crocodoc whitelist ids in the preview url for attachments" do
+  it "includes crocodoc allowed ids in the preview url for attachments" do
     allow(Canvas::Crocodoc).to receive(:config).and_return({a: 1})
 
     course_with_teacher_logged_in active_all: true
@@ -4514,8 +4603,8 @@ describe 'Submissions API', type: :request do
     parsed_blob = JSON.parse parsed_params["blob"].first
     expect(parsed.path).to eq "/api/v1/crocodoc_session"
 
-    expect(parsed_blob["moderated_grading_whitelist"]).to include(@student.moderated_grading_ids.as_json)
-    expect(parsed_blob["moderated_grading_whitelist"]).to include(@teacher.moderated_grading_ids.as_json)
+    expect(parsed_blob["moderated_grading_allow_list"]).to include(@student.moderated_grading_ids.as_json)
+    expect(parsed_blob["moderated_grading_allow_list"]).to include(@teacher.moderated_grading_ids.as_json)
   end
 
 

@@ -44,12 +44,12 @@ export function failMedia({error, contextType}) {
 // dispatches the start of the load, requests a page for the collection from
 // the source, then dispatches the loaded page to the store on success or
 // clears the load on failure
-export function fetchMedia(sortBy) {
+export function fetchMedia() {
   return (dispatch, getState) => {
     const state = getState()
     dispatch(requestMedia(state.contextType))
     return state.source
-      .fetchMedia({...state, ...sortBy})
+      .fetchMedia(state)
       .then(response => dispatch(receiveMedia({response, contextType: state.contextType})))
       .catch(error => dispatch(failMedia({error, contextType: state.contextType})))
   }
@@ -57,35 +57,34 @@ export function fetchMedia(sortBy) {
 
 // fetches a page only if a page is not already being loaded and the
 // collection is not yet completely loaded
-export function fetchNextMedia(sortBy) {
+export function fetchNextMedia() {
   return (dispatch, getState) => {
     const state = getState()
     const media = state.media[state.contextType]
 
     if (!media?.isLoading && media?.hasMore) {
       dispatch(requestMedia(state.contextType))
-      return dispatch(fetchMedia(sortBy))
+      return dispatch(fetchMedia())
     }
   }
 }
 
 // fetches the next page (subject to conditions on fetchNextMedia) only if the
 // collection is currently empty
-export function fetchInitialMedia(sortBy) {
+export function fetchInitialMedia() {
   return (dispatch, getState) => {
     const state = getState()
 
     dispatch(requestInitialMedia(state.contextType))
-    return dispatch(fetchMedia(sortBy))
+    return dispatch(fetchMedia())
   }
 }
 
 // update the media object.
-// For now only supports the title
-export function updateMediaObject({media_object_id, title}) {
+export function updateMediaObject({media_object_id, title, subtitles}) {
   return (dispatch, getState) => {
     const state = getState()
-    return state.source.updateMediaObject(state, {media_object_id, title}).catch(e => {
+    const moupdate = state.source.updateMediaObject(state, {media_object_id, title}).catch(e => {
       alertHandler.handleAlert({
         text: formatMessage(
           'Though your video will have the correct title in the browser, we failed to update it in the database.'
@@ -94,5 +93,13 @@ export function updateMediaObject({media_object_id, title}) {
       })
       throw e
     })
+
+    if (ENV.FEATURES.cc_in_rce_video_tray) {
+      const ccupdate = state.source.updateClosedCaptions(state, {media_object_id, subtitles})
+
+      return Promise.all([moupdate, ccupdate])
+    } else {
+      return moupdate
+    }
   }
 }

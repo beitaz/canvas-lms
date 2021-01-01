@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2020 - present Instructure, Inc.
 #
@@ -21,7 +23,7 @@ module DataFixup::SplitUpUserPreferences
       User.where(:id => min_id..max_id).where("id < ? AND preferences IS NOT NULL", Shard::IDS_PER_SHARD).each do |u|
         if u.needs_preference_migration?
           u.migrate_preferences_if_needed
-          u.save
+          User.where(:id => u).update_all(:preferences => u.preferences, :updated_at => Time.now.utc)
         end
       end
     end

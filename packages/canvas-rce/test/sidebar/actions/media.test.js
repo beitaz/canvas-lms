@@ -21,11 +21,13 @@ import * as actions from '../../../src/sidebar/actions/media'
 import {
   fetchMedia,
   updateMediaObject,
-  updateMediaObjectFailure
+  updateMediaObjectFailure,
+  updateClosedCaptions
 } from '../../../src/sidebar/sources/fake'
 import alertHandler from '../../../src/rce/alertHandler'
 
 const sortBy = {sort: 'alphabetical', order: 'asc'}
+const searchString = 'hello'
 
 function getInitialState() {
   return {
@@ -40,6 +42,15 @@ function getInitialState() {
     contextType: 'course'
   }
 }
+
+beforeEach(() => {
+  global.ENV = {
+    FEATURES: {
+      cc_in_rce_video_tray: true
+    }
+  }
+})
+
 describe('Media actions', () => {
   afterEach(() => {
     sinon.restore()
@@ -48,13 +59,13 @@ describe('Media actions', () => {
     it('fetches initial page', () => {
       const dispatchSpy = sinon.spy()
       const getState = getInitialState
-      actions.fetchInitialMedia(sortBy)(dispatchSpy, getState)
+      actions.fetchInitialMedia(sortBy, searchString)(dispatchSpy, getState)
       assert(dispatchSpy.called)
     })
     it('fetches next page if necessary', () => {
       const dispatchSpy = sinon.spy()
       const getState = getInitialState
-      actions.fetchNextMedia(sortBy)(dispatchSpy, getState)
+      actions.fetchNextMedia(sortBy, searchString)(dispatchSpy, getState)
       assert(dispatchSpy.called)
     })
     it('always fetches initial fetch page', () => {
@@ -66,7 +77,7 @@ describe('Media actions', () => {
         state.media.course.files = [{one: '1'}, {two: '2'}, {three: '3'}]
         return state
       }
-      actions.fetchInitialMedia(sortBy)(dispatchSpy, getState)
+      actions.fetchInitialMedia(sortBy, searchString)(dispatchSpy, getState)
       assert(dispatchSpy.called)
     })
     it('fetches if there is more to load', () => {
@@ -77,7 +88,7 @@ describe('Media actions', () => {
         state.media.course.hasMore = true
         return state
       }
-      actions.fetchNextMedia(sortBy)(dispatchSpy, getState)
+      actions.fetchNextMedia(sortBy, searchString)(dispatchSpy, getState)
       assert(dispatchSpy.called)
     })
     it('does not fetch if requested but no more to load', () => {
@@ -88,7 +99,7 @@ describe('Media actions', () => {
         state.media.course.hasMore = false
         return state
       }
-      actions.fetchNextMedia(sortBy)(dispatchSpy, getState)
+      actions.fetchNextMedia(sortBy, searchString)(dispatchSpy, getState)
       assert(!dispatchSpy.called)
     })
     it('fetches media', async () => {
@@ -101,7 +112,7 @@ describe('Media actions', () => {
         }
         return state
       }
-      await actions.fetchMedia(sortBy)(dispatchSpy, getState)
+      await actions.fetchMedia(sortBy, searchString)(dispatchSpy, getState)
       assert(
         dispatchSpy.calledWith({type: actions.REQUEST_MEDIA, payload: {contextType: 'course'}})
       )
@@ -161,24 +172,34 @@ describe('Media actions', () => {
     })
     it('calls the api', async () => {
       const updateSpy = sinon.spy(updateMediaObject)
+      const updateCCSpy = sinon.spy()
       const dispatch = () => {}
       const getState = () => {
         const state = getInitialState()
-        state.source = {updateMediaObject: updateSpy}
+        state.source = {updateMediaObject: updateSpy, updateClosedCaptions: updateCCSpy}
         return state
       }
-      await actions.updateMediaObject({media_object_id: 'moid', title: 'title'})(dispatch, getState)
+      await actions.updateMediaObject({
+        media_object_id: 'moid',
+        title: 'title',
+        subtitles: {en: 'whatever'}
+      })(dispatch, getState)
       assert(updateSpy.called)
       assert.deepEqual(updateSpy.getCalls()[0].args[1], {
         media_object_id: 'moid',
         title: 'title'
+      })
+      assert(updateCCSpy.called)
+      assert.deepEqual(updateCCSpy.getCalls()[0].args[1], {
+        media_object_id: 'moid',
+        subtitles: {en: 'whatever'}
       })
     })
     it('handles failure', async () => {
       const dispatch = () => {}
       const getState = () => {
         const state = getInitialState()
-        state.source = {updateMediaObject: updateMediaObjectFailure}
+        state.source = {updateMediaObject: updateMediaObjectFailure, updateClosedCaptions}
         return state
       }
       try {

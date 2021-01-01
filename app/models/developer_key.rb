@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -19,11 +21,18 @@
 require 'aws-sdk-sns'
 
 class DeveloperKey < ActiveRecord::Base
+  class CacheOnAssociation < ActiveRecord::Associations::BelongsToAssociation
+    def find_target
+      DeveloperKey.find_cached(owner._read_attribute(reflection.foreign_key))
+    end  
+  end
+
   include CustomValidations
   include Workflow
 
   belongs_to :user
   belongs_to :account
+  belongs_to :root_account, class_name: 'Account'
 
   has_many :page_views
   has_many :access_tokens, -> { where(:workflow_state => "active") }
@@ -42,6 +51,7 @@ class DeveloperKey < ActiveRecord::Base
   before_save :nullify_empty_icon_url
   before_save :protect_default_key
   before_save :set_require_scopes
+  before_save :set_root_account
   after_save :clear_cache
   after_update :invalidate_access_tokens_if_scopes_removed!
   after_update :destroy_external_tools!, if: :destroy_external_tools?
@@ -57,6 +67,7 @@ class DeveloperKey < ActiveRecord::Base
   scope :nondeleted, -> { where("workflow_state<>'deleted'") }
   scope :not_active, -> { where("workflow_state<>'active'") } # search for deleted & inactive keys
   scope :visible, -> { where(visible: true) }
+  scope :site_admin, -> { where(account_id: nil) } # site_admin keys have a nil account_id
   scope :site_admin_lti, -> (key_ids) do
     # Select site admin shard developer key ids
     site_admin_key_ids = key_ids.select do |id|
@@ -67,7 +78,7 @@ class DeveloperKey < ActiveRecord::Base
       lti_key_ids = Lti::ToolConfiguration.joins(:developer_key).
         where(developer_keys: { id: site_admin_key_ids }).
         pluck(:developer_key_id)
-      DeveloperKey.where(id: lti_key_ids)
+      self.where(id: lti_key_ids)
     end
   end
 
@@ -133,7 +144,7 @@ class DeveloperKey < ActiveRecord::Base
 
   def generate_rsa_keypair!(overwrite: false)
     return if public_jwk.present? && !overwrite
-    key_pair = Lti::RSAKeyPair.new
+    key_pair = Canvas::Security::RSAKeyPair.new
     @private_jwk = key_pair.to_jwk
     self.public_jwk = key_pair.public_jwk.to_h
   end
@@ -190,10 +201,10 @@ class DeveloperKey < ActiveRecord::Base
     def find_cached(id)
       global_id = Shard.global_id_for(id)
       MultiCache.fetch("developer_key/#{global_id}") do
-        Shackles.activate(:slave) do
-          DeveloperKey.find(global_id)
+        GuardRail.activate(:secondary) do
+          DeveloperKey.find_by(id: global_id)
         end
-      end
+      end or raise ActiveRecord::RecordNotFound
     end
 
     def by_cached_vendor_code(vendor_code)
@@ -206,6 +217,15 @@ class DeveloperKey < ActiveRecord::Base
   def clear_cache
     MultiCache.delete("developer_key/#{global_id}")
     MultiCache.delete("developer_keys/#{vendor_code}") if vendor_code.present?
+  end
+
+  def set_root_account
+    # If the key belongs to a non-site admin account, resolve
+    # the root account through that account. Otherwise use the
+    # site admin account ID if the current shard is the site admin
+    # shard
+    self.root_account_id ||= account&.resolved_root_account_id
+    self.root_account_id ||= Account.site_admin.id if Shard.current == Shard.default
   end
 
   def authorized_for_account?(target_account)
@@ -253,7 +273,12 @@ class DeveloperKey < ActiveRecord::Base
     binding = DeveloperKeyAccountBinding.find_in_account_priority(accounts, self.id)
 
     # If no explicity set bindings were found check for 'allow' bindings
-    binding || DeveloperKeyAccountBinding.find_in_account_priority(accounts.reverse, self.id, false)
+    binding ||= DeveloperKeyAccountBinding.find_in_account_priority(accounts.reverse, self.id, false)
+
+    # Check binding not for wrong account (on different shard)
+    return nil if binding && binding.shard.id != binding_account.shard.id
+
+    binding
   end
 
   def owner_account
@@ -296,6 +321,20 @@ class DeveloperKey < ActiveRecord::Base
     )
   end
 
+  def issue_token(claims)
+    case client_credentials_audience
+    when "external"
+      # asymmetric encryption signed with private key to be verified by third
+      # party using public key fetched from /login/oauth2/jwks
+      key = Canvas::Oauth::KeyStorage.present_key
+      Canvas::Security.create_jwt(claims, nil, key, :autodetect).to_s
+    else
+      # default symmetric encryption to be verified when given right back to
+      # canvas
+      Canvas::Security.create_jwt(claims).to_s
+    end
+  end
+
   private
 
   def validate_lti_fields
@@ -313,29 +352,16 @@ class DeveloperKey < ActiveRecord::Base
 
     if affected_account.blank? || affected_account.site_admin?
       # Cleanup tools across all shards
-      send_later_enqueue_args(
-        :manage_external_tools_multi_shard,
-        enqueue_args,
-        enqueue_args,
-        method,
-        affected_account
-      )
+      delay(**enqueue_args).
+        manage_external_tools_multi_shard(enqueue_args, method, affected_account)
     else
-      send_later_enqueue_args(
-        method,
-        enqueue_args,
-        affected_account
-      )
+      delay(**enqueue_args).__send__(method, affected_account)
     end
   end
 
   def manage_external_tools_multi_shard(enqueue_args, method, affected_account)
     Shard.with_each_shard do
-      send_later_enqueue_args(
-        method,
-        enqueue_args,
-        affected_account
-      )
+      delay(**enqueue_args).__send__(method, affected_account)
     end
   end
 
@@ -446,7 +472,7 @@ class DeveloperKey < ActiveRecord::Base
   def invalidate_access_tokens_if_scopes_removed!
     return unless saved_change_to_scopes?
     return if (scopes_before_last_save - scopes).blank?
-    send_later_if_production(:invalidate_access_tokens!)
+    delay_if_production.invalidate_access_tokens!
   end
 
   def invalidate_access_tokens!

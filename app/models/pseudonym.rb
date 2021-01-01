@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -15,15 +17,21 @@
 # You should have received a copy of the GNU Affero General Public License along
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
+class ImpossibleCredentialsError < ArgumentError; end
 
 class Pseudonym < ActiveRecord::Base
   include Workflow
 
   has_many :session_persistence_tokens
   belongs_to :account
+  include Canvas::RootAccountCacher
   belongs_to :user
   has_many :communication_channels, -> { order(:position) }
   has_many :sis_enrollments, class_name: 'Enrollment', inverse_of: :sis_pseudonym
+  has_many :auditor_authentication_records,
+    class_name: "Auditors::ActiveRecord::AuthenticationRecord",
+    dependent: :destroy,
+    inverse_of: :pseudonym
   belongs_to :communication_channel
   belongs_to :sis_communication_channel, :class_name => 'CommunicationChannel'
   belongs_to :authentication_provider
@@ -46,6 +54,8 @@ class Pseudonym < ActiveRecord::Base
   before_validation :infer_defaults, :verify_unique_sis_user_id, :verify_unique_integration_id
   after_save :update_account_associations_if_account_changed
   has_a_broadcast_policy
+
+  alias_attribute :root_account_id, :account_id
 
   alias_method :context, :account
 
@@ -118,13 +128,9 @@ class Pseudonym < ActiveRecord::Base
     end
   end
 
-  def root_account_id
-    account.root_account_id || account.id
-  end
-
   def must_be_root_account
     if account_id_changed?
-      self.errors.add(:account_id, "must belong to a root_account") unless self.account_id == self.root_account_id
+      self.errors.add(:account_id, "must belong to a root_account") unless account.root_account?
     end
   end
 
@@ -212,7 +218,7 @@ class Pseudonym < ActiveRecord::Base
     :email_login
   end
 
-  def works_for_account?(account, allow_implicit = false)
+  def works_for_account?(account, allow_implicit = false, ignore_types: [:implicit])
     true
   end
 
@@ -269,7 +275,7 @@ class Pseudonym < ActiveRecord::Base
   set_policy do
     # an admin can only create and update pseudonyms when they have
     # :manage_user_logins permission on the pseudonym's account, :read
-    # permission on the pseudonym's owner, and a superset of hte pseudonym's
+    # permission on the pseudonym's owner, and a superset of the pseudonym's
     # owner's rights (if any) on the pseudonym's account. some fields of the
     # pseudonym may require additional conditions to update (see below)
     given do |user|
@@ -488,6 +494,12 @@ class Pseudonym < ActiveRecord::Base
   def self.find_all_by_arbitrary_credentials(credentials, account_ids, remote_ip)
     return [] if credentials[:unique_id].blank? ||
                  credentials[:password].blank?
+    if credentials[:unique_id].length > 255
+      # this sometimes happens by mistake, and produces noisy errors.
+      # we can handle this error explicitly when it arrives and just return
+      # a failed login instead of an error.
+      raise ImpossibleCredentialsError, "pseudonym cannot have a unique_id of length #{credentials[:unique_id].length}"
+    end
     too_many_attempts = false
     begin
       associated_shards = associated_shards(credentials[:unique_id])
@@ -513,7 +525,13 @@ class Pseudonym < ActiveRecord::Base
   end
 
   def self.authenticate(credentials, account_ids, remote_ip = nil)
-    pseudonyms = find_all_by_arbitrary_credentials(credentials, account_ids, remote_ip)
+    pseudonyms = []
+    begin
+      pseudonyms = find_all_by_arbitrary_credentials(credentials, account_ids, remote_ip)
+    rescue ImpossibleCredentialsError => e
+      Rails.logger.info("Impossible pseudonym credentials: #{credentials[:unique_id]}, invalidating session")
+      return :impossible_credentials
+    end
     return :too_many_attempts if pseudonyms == :too_many_attempts
     site_admin = pseudonyms.find { |p| p.account_id == Account.site_admin.id }
     # only log them in if these credentials match a single user OR if it matched site admin

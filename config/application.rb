@@ -44,8 +44,9 @@ module CanvasRails
     config.action_dispatch.rescue_responses['AuthenticationMethods::AccessTokenError'] = 401
     config.action_dispatch.rescue_responses['AuthenticationMethods::AccessTokenScopeError'] = 401
     config.action_dispatch.rescue_responses['AuthenticationMethods::LoggedOutError'] = 401
+    config.action_dispatch.rescue_responses['CanvasHttp::CircuitBreakerError'] = 502
     config.action_dispatch.default_headers.delete('X-Frame-Options')
-    config.action_dispatch.default_headers.delete('Referrer-Policy')
+    config.action_dispatch.default_headers['Referrer-Policy'] = 'no-referrer-when-downgrade'
     config.action_controller.forgery_protection_origin_check = true
     ActiveSupport.to_time_preserves_timezone = true
 
@@ -98,7 +99,7 @@ module CanvasRails
     end
 
     # Activate observers that should always be running
-    config.active_record.observers = [:cacher, :stream_item_cache, :live_events_observer, :conditional_release_observer ]
+    config.active_record.observers = [:cacher, :stream_item_cache, :live_events_observer ]
     config.active_record.allow_unsafe_raw_sql = :disabled
 
     config.active_support.encode_big_decimal_as_string = false
@@ -115,16 +116,9 @@ module CanvasRails
     config.middleware.use Rack::Deflater, if: -> (*) {
       ::Canvas::DynamicSettings.find(tree: :private)["enable_rack_deflation"]
     }
-
-    # we don't know what middleware to make SessionsTimeout follow until after
-    # we've loaded config/initializers/session_store.rb
-    initializer("extend_middleware_stack", after: "load_config_initializers") do |app|
-      app.config.middleware.insert_before(config.session_store, LoadAccount)
-      app.config.middleware.swap(ActionDispatch::RequestId, RequestContextGenerator)
-      app.config.middleware.insert_after(config.session_store, RequestContextSession)
-      app.config.middleware.insert_before(Rack::Head, RequestThrottle)
-      app.config.middleware.insert_before(Rack::MethodOverride, PreventNonMultipartParse)
-    end
+    config.middleware.use Rack::Brotli, if: -> (*) {
+      ::Canvas::DynamicSettings.find(tree: :private)["enable_rack_brotli"]
+    }
 
     config.i18n.load_path << Rails.root.join('config', 'locales', 'locales.yml')
 
@@ -170,7 +164,7 @@ module CanvasRails
     module TypeMapInitializerExtensions
       def query_conditions_for_initial_load
         known_type_names = @store.keys.map { |n| "'#{n}'" } + @store.keys.map { |n| "'_#{n}'" }
-        <<-SQL % [known_type_names.join(", "),]
+        <<~SQL % [known_type_names.join(", "),]
           WHERE
             t.typname IN (%s)
         SQL
@@ -227,24 +221,22 @@ module CanvasRails
     class NotImplemented < StandardError; end
 
     if defined?(PhusionPassenger)
-      PhusionPassenger.on_event(:starting_worker_process) do |forked|
-        if forked
-          # We're in smart spawning mode, and need to make unique connections for this fork.
-          Canvas.reconnect_redis
-          # if redis failed, we would have established a connection to the
-          # database (trying to read the ignore_redis_failures setting), but
-          # we're running in the main passenger thread, and Rails will get mad
-          # at us if we try to use that connection in a different thread (the
-          # worker thread that actually processes requests). So just always
-          # close the connections again
-          ActiveRecord::Base.clear_all_connections!
-        end
-      end
-    end
-
-    if defined?(PhusionPassenger)
       PhusionPassenger.on_event(:after_installing_signal_handlers) do
         Canvas::Reloader.trap_signal
+      end
+      PhusionPassenger.on_event(:starting_worker_process) do |forked|
+        if forked
+          # We're in smart spawning mode.
+          # Reset imperium because it's possible to accidentally share an open http
+          # socket between processes shortly after fork.
+          Imperium::Agent.reset_default_client
+          Imperium::Catalog.reset_default_client
+          Imperium::Client.reset_default_client
+          Imperium::Events.reset_default_client
+          Imperium::KV.reset_default_client
+        else
+          # We're in direct spawning mode. We don't need to do anything.
+        end
       end
     else
       config.to_prepare do
@@ -252,11 +244,10 @@ module CanvasRails
       end
     end
 
-    if defined?(Spring)
-      Spring.after_fork do
-        Canvas.reconnect_redis
-      end
-    end
+    # Ensure that the automatic redis reconnection on fork works
+    # This is the default in redis-rb, but for some reason rails overrides it
+    # See e.g. https://gitlab.com/gitlab-org/gitlab/-/merge_requests/22704
+    ActiveSupport::Cache::RedisCacheStore::DEFAULT_REDIS_OPTIONS[:reconnect_attempts] = 1
 
     # don't wrap fields with errors with a <div class="fieldWithErrors" />,
     # since that could leak information (e.g. valid vs invalid username on
@@ -285,6 +276,33 @@ module CanvasRails
     def validate_secret_key_config!
       # no validation; we don't use Rails' CookieStore session middleware, so we
       # don't care about secret_key_base
+    end
+
+    initializer "canvas.init_dynamic_settings", before: "canvas.extend_shard" do
+      settings = ConfigFile.load("consul")
+      if settings.present?
+        begin
+          Canvas::DynamicSettings.config = settings
+        rescue Imperium::UnableToConnectError
+          Rails.logger.warn("INITIALIZATION: can't reach consul, attempts to load DynamicSettings will fail")
+        end
+      end
+    end
+
+    initializer "canvas.extend_shard", before: "active_record.initialize_database" do
+      # have to do this before the default shard loads
+      Switchman::Shard.serialize :settings, Hash
+      Switchman.cache = -> { MultiCache.cache }
+    end
+
+    # we don't know what middleware to make SessionsTimeout follow until after
+    # we've loaded config/initializers/session_store.rb
+    initializer("extend_middleware_stack", after: :load_config_initializers) do |app|
+      app.config.middleware.insert_before(config.session_store, LoadAccount)
+      app.config.middleware.swap(ActionDispatch::RequestId, RequestContextGenerator)
+      app.config.middleware.insert_after(config.session_store, RequestContextSession)
+      app.config.middleware.insert_before(Rack::Head, RequestThrottle)
+      app.config.middleware.insert_before(Rack::MethodOverride, PreventNonMultipartParse)
     end
   end
 end

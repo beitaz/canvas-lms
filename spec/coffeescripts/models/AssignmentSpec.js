@@ -163,7 +163,7 @@ test('returns true if submissionType is "external_tool" and default tool is sele
   equal(assignment.isDefaultTool(), true)
 })
 
-QUnit.module('Assignment#isNonDefaultExternalTool', {
+QUnit.module('Assignment#isGenericExternalTool', {
   setup() {
     fakeENV.setup({
       DEFAULT_ASSIGNMENT_TOOL_NAME: 'Default Tool',
@@ -189,13 +189,13 @@ test('returns true when submissionType is "external_tool" and non default tool i
     }
   })
   assignment.submissionTypes(['external_tool'])
-  equal(assignment.isNonDefaultExternalTool(), true)
+  equal(assignment.isGenericExternalTool(), true)
 })
 
 test('returns true when submissionType is "external_tool"', () => {
   const assignment = new Assignment({name: 'foo'})
   assignment.submissionTypes(['external_tool'])
-  equal(assignment.isNonDefaultExternalTool(), true)
+  equal(assignment.isGenericExternalTool(), true)
 })
 
 QUnit.module('Assignment#isExternalTool')
@@ -1523,5 +1523,63 @@ QUnit.module('Assignment#quizzesRespondusEnabled', hooks => {
     assignment.set('require_lockdown_browser', true)
     assignment.set('is_quiz_lti_assignment', true)
     equal(assignment.quizzesRespondusEnabled(), true)
+  })
+})
+
+QUnit.module('Assignment#externalToolTagAttributes', hooks => {
+  const externalData = {
+    key1: 'val1'
+  }
+  const customParams = {
+    root_account_id: '$Canvas.rootAccount.id',
+    referer: 'LTI test tool example'
+  }
+  let assignment
+
+  hooks.beforeEach(() => {
+    assignment = new Assignment({
+      name: 'Sample Assignment',
+      external_tool_tag_attributes: {
+        content_id: 999,
+        content_type: 'context_external_tool',
+        custom: customParams,
+        new_tab: '0',
+        url: 'http://lti13testtool.docker/launch',
+        external_data: externalData
+      }
+    })
+    fakeENV.setup({current_user_roles: []})
+  })
+
+  hooks.afterEach(() => {
+    fakeENV.teardown()
+  })
+
+  test(`returns url from assignment's external tool attributtes`, () => {
+    const url = assignment.externalToolUrl()
+
+    equal(url, 'http://lti13testtool.docker/launch')
+  })
+
+  test(`returns external data from assignment's external tool attributtes`, () => {
+    const data = assignment.externalToolData()
+
+    equal(data.key1, 'val1')
+
+    equal(assignment.externalToolDataStringified(), JSON.stringify(externalData))
+  })
+
+  test(`returns custom params from assignment's external tool attributtes`, () => {
+    equal(assignment.externalToolCustomParams(), customParams)
+  })
+
+  test(`returns custom params stringified from assignment's external tool attributtes`, () => {
+    const data = assignment.externalToolCustomParamsStringified()
+
+    equal(data, JSON.stringify(customParams))
+  })
+
+  test(`returns new tab from assignment's external tool attributtes`, () => {
+    equal(assignment.externalToolNewTab(), '0')
   })
 })

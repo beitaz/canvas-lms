@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -132,6 +134,7 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
     end
 
     it "should show files uploaded on the images tab in the file tree" do
+      skip('Stabilize in LA-844')
       wiki_page_tools_file_tree_setup(true, true)
       click_files_tab
       expect(sidebar_files.count).to eq 4

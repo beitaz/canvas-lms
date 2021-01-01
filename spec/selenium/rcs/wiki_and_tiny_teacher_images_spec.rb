@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -114,6 +116,7 @@ describe "Wiki pages and Tiny WYSIWYG editor Images" do
       get "/courses/#{@course.id}/pages/blank"
       wait_for_ajaximations
       f('a.edit-wiki').click
+      wait_for_tiny(f("#tinymce-parent-of-wiki_page_body"))
       add_url_image(driver, 'https://via.placeholder.com/150.jpg', 'alt text')
       f('form.edit-form button.submit').click
       expect(f('#wiki_page_show')).to be_displayed

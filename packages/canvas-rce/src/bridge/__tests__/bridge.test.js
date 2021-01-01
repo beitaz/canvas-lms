@@ -24,10 +24,72 @@ describe('Editor/Sidebar bridge', () => {
     jest.restoreAllMocks()
   })
 
-  it('focusEditor sets the active editor', () => {
-    const editor = {}
-    Bridge.focusEditor(editor)
-    expect(Bridge.activeEditor()).toBe(editor)
+  describe('focusEditor', () => {
+    it('sets the active editor', () => {
+      const editor = {}
+      Bridge.focusEditor(editor)
+      expect(Bridge.activeEditor()).toBe(editor)
+    })
+
+    it('calls hideTrays if focus is changing', () => {
+      jest.spyOn(Bridge, 'hideTrays')
+      Bridge.focusEditor({id: 'editor_id'})
+      expect(Bridge.hideTrays).toHaveBeenCalledTimes(1)
+      Bridge.focusEditor({id: 'another_editor'})
+      expect(Bridge.hideTrays).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not call hideTrays if focus is not changing', () => {
+      const editor = {id: 'editor_id'}
+      jest.spyOn(Bridge, 'hideTrays')
+      Bridge.focusEditor(editor)
+      Bridge.focusEditor(editor)
+      expect(Bridge.hideTrays).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('blurEditor', () => {
+    it('sets active editor to null if bluring the active editor', () => {
+      const editor = {id: 'editor_id'}
+      Bridge.focusedEditor = editor
+      Bridge.blurEditor(editor)
+      expect(Bridge.activeEditor()).toBe(null)
+    })
+
+    it('does not set the active editor to null if not bluring the active editor', () => {
+      const editor = {id: 'editor_id'}
+      Bridge.focusedEditor = editor
+      Bridge.blurEditor({id: 'another_editor'})
+      expect(Bridge.activeEditor()).toBe(editor)
+    })
+
+    it('calls hideTrays if bluring the active editor', () => {
+      jest.spyOn(Bridge, 'hideTrays')
+      const editor = {id: 'editor_id'}
+      Bridge.focusedEditor = editor
+      Bridge.blurEditor(editor)
+      expect(Bridge.hideTrays).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not set call hideTrays if not bluring the active editor', () => {
+      jest.spyOn(Bridge, 'hideTrays')
+      const editor = {id: 'editor_id'}
+      Bridge.focusedEditor = editor
+      Bridge.blurEditor({id: 'another_editor'})
+      expect(Bridge.hideTrays).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('hideTrays', () => {
+    it('calls hideTray on each of the registered controllers', () => {
+      const controller1 = {hideTray: jest.fn()}
+      const controller2 = {hideTray: jest.fn()}
+      Bridge.attachController(controller1, 'an_editor')
+      Bridge.attachController(controller2, 'another_editor')
+      Bridge.hideTrays()
+      expect(controller1.hideTray).toHaveBeenCalled()
+      expect(controller2.hideTray).toHaveBeenCalled()
+    })
   })
 
   describe('detachEditor', () => {
@@ -74,10 +136,15 @@ describe('Editor/Sidebar bridge', () => {
     beforeEach(() => {
       jest.spyOn(console, 'warn')
       editor = {
+        id: 'editor_id',
+        addAlert: jest.fn(),
         insertLink: jest.fn(),
         insertVideo: jest.fn(),
         insertAudio: jest.fn(),
         insertEmbedCode: jest.fn(),
+        removePlaceholders: jest.fn(),
+        insertImagePlaceholder: jest.fn(),
+        existingContentToLink: () => false,
         props: {
           textareaId: 'fake_editor',
           tinymce: {
@@ -118,20 +185,53 @@ describe('Editor/Sidebar bridge', () => {
         })
       })
 
-      it('calls hideTray when necessary', () => {
+      it('calls hideTray after inserting a link', () => {
         const hideTray = jest.fn()
-        Bridge.attachController({hideTray})
         Bridge.focusEditor(editor)
+        Bridge.attachController({hideTray}, 'editor_id')
         Bridge.insertLink({})
         expect(hideTray).toHaveBeenCalledTimes(1)
       })
 
-      it("does not call hideTray when it shouldn't", () => {
-        const hideTray = jest.fn()
-        Bridge.attachController({hideTray})
+      it('inserts the placeholder when asked', () => {
         Bridge.focusEditor(editor)
-        Bridge.insertLink({}, false)
-        expect(hideTray).not.toHaveBeenCalled()
+        Bridge.insertImagePlaceholder({})
+        expect(Bridge.getEditor().insertImagePlaceholder).toHaveBeenCalled()
+      })
+
+      it('does not insert the placeholder if the user has selected text', () => {
+        editor.existingContentToLink = () => true
+        Bridge.focusEditor(editor)
+        Bridge.insertImagePlaceholder({})
+        expect(Bridge.getEditor().insertImagePlaceholder).not.toHaveBeenCalled()
+      })
+    })
+
+    describe('insertFileLink', () => {
+      it('inserts a link', () => {
+        const insertLinkSpy = jest.spyOn(Bridge, 'insertLink')
+        Bridge.insertFileLink({content_type: 'plain/text'})
+        expect(insertLinkSpy).toHaveBeenCalled()
+      })
+
+      it('embeds an image', () => {
+        const insertLinkSpy = jest.spyOn(Bridge, 'insertLink')
+        const insertImageSpy = jest.spyOn(Bridge, 'insertImage')
+        Bridge.insertFileLink({content_type: 'image/png'})
+        expect(insertLinkSpy).not.toHaveBeenCalled()
+        expect(insertImageSpy).toHaveBeenCalled()
+      })
+
+      it('embeds media', () => {
+        const insertLinkSpy = jest.spyOn(Bridge, 'insertLink')
+        const embedMediaSpy = jest.spyOn(Bridge, 'embedMedia')
+        Bridge.insertFileLink({content_type: 'video/mp4', href: 'here/i/am'})
+        expect(insertLinkSpy).not.toHaveBeenCalled()
+        expect(embedMediaSpy).toHaveBeenCalledWith({
+          content_type: 'video/mp4',
+          href: 'here/i/am',
+          embedded_iframe_url: 'here/i/am'
+        })
       })
     })
 
@@ -139,7 +239,7 @@ describe('Editor/Sidebar bridge', () => {
       let hideTray
       beforeEach(() => {
         hideTray = jest.fn()
-        Bridge.attachController({hideTray})
+        Bridge.attachController({hideTray}, 'editor_id')
         Bridge.focusEditor(editor)
       })
 
@@ -168,6 +268,37 @@ describe('Editor/Sidebar bridge', () => {
         const theCode = 'insert me'
         Bridge.insertEmbedCode(theCode)
         expect(editor.insertEmbedCode).toHaveBeenCalledWith(theCode)
+      })
+    })
+
+    describe('upload support', () => {
+      it('removes the placeholder', () => {
+        Bridge.focusEditor(editor)
+        Bridge.removePlaceholders('forfilename')
+        expect(editor.removePlaceholders).toHaveBeenCalledWith('forfilename')
+      })
+
+      it('shows an error message', () => {
+        Bridge.focusEditor(editor)
+        Bridge.showError('whoops')
+        expect(editor.addAlert).toHaveBeenCalledWith({
+          text: 'whoops',
+          type: 'error'
+        })
+      })
+    })
+
+    describe('get uploadMediaTranslations', () => {
+      it('requires mediaTranslations if it needs to', () => {
+        Bridge._uploadMediaTranslations = null
+        const umt = Bridge.uploadMediaTranslations
+        expect(umt).toBeDefined()
+      })
+
+      it('uses the cached value if available', () => {
+        Bridge._uploadMediaTranslations = {foo: 1}
+        const umt = Bridge.uploadMediaTranslations
+        expect(umt).toEqual({foo: 1})
       })
     })
   })

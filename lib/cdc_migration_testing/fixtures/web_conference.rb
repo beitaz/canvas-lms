@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2020 - present Instructure, Inc.
 #
@@ -19,6 +21,7 @@
 module CdcFixtures
   def self.create_web_conference
     ps = PluginSetting.find_or_create_by(name: 'adobe_connect')
+    ps.settings = {}
     ps.disabled = false
     ps.save!
 

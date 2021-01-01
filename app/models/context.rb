@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -20,7 +22,7 @@
 # See Context::CONTEXT_TYPES below.
 module Context
 
-  CONTEXT_TYPES = [:Account, :Course, :User, :Group].freeze
+  CONTEXT_TYPES = [:Account, :Course, :CourseSection, :User, :Group].freeze
 
   ASSET_TYPES = {
       Announcement: :Announcement,
@@ -360,5 +362,9 @@ module Context
          .order("updated_at DESC")
          .limit(1)
          .pluck(:updated_at)&.first
+  end
+
+  def resolved_root_account_id
+    self.root_account_id if self.respond_to? :root_account_id
   end
 end

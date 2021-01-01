@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -49,7 +51,9 @@ describe "RCS sidebar tests" do
       wait_for_ajaximations
 
       in_frame wiki_page_body_ifr_id do
-        expect(wiki_body_anchor.attribute('href')).to include title
+        wait_for(method: nil, timeout: 2) do
+          expect(wiki_body_anchor.attribute('href')).to include title
+        end
       end
     end
 

@@ -114,6 +114,8 @@ let anonymizableStudentId
 let anonymizableAuthorId
 let isModerated
 
+let commentSubmissionInProgress
+
 let $window
 let $full_width_container
 let $left_side
@@ -562,8 +564,10 @@ function setupHeader() {
     },
 
     keyboardShortcutInfoModal() {
-      const questionMarkKeyDown = $.Event('keydown', {keyCode: 191})
-      $(document).trigger(questionMarkKeyDown)
+      if (!ENV.disable_keyboard_shortcuts) {
+        const questionMarkKeyDown = $.Event('keydown', {keyCode: 191, shiftKey: true})
+        $(document).trigger(questionMarkKeyDown)
+      }
     },
 
     submitSettingsForm(e) {
@@ -970,7 +974,7 @@ function initRubricStuff() {
     } else {
       data.graded_anonymously = utils.shouldHideStudentNames()
     }
-    const url = $('.update_rubric_assessment_url').attr('href')
+    const url = ENV.update_rubric_assessment_url
     const method = 'POST'
     EG.toggleFullRubric('close')
 
@@ -980,19 +984,21 @@ function initRubricStuff() {
         rubricAssessment.updateRubricAssociation($rubric, response.rubric_association)
         delete response.rubric_association
       }
-      for (let i = 0; i < EG.currentStudent.rubric_assessments.length; i++) {
-        if (response.id === EG.currentStudent.rubric_assessments[i].id) {
-          $.extend(true, EG.currentStudent.rubric_assessments[i], response)
+
+      // If the student has a submission, update it with the data returned,
+      // otherwise we need to create a submission for them.
+      const assessedStudent = EG.setOrUpdateSubmission(response.artifact)
+
+      for (let i = 0; i < assessedStudent.rubric_assessments.length; i++) {
+        if (response.id === assessedStudent.rubric_assessments[i].id) {
+          $.extend(true, assessedStudent.rubric_assessments[i], response)
           found = true
           continue
         }
       }
       if (!found) {
-        EG.currentStudent.rubric_assessments.push(response)
+        assessedStudent.rubric_assessments.push(response)
       }
-
-      // if this student has a submission, update it with the data returned, otherwise we need to create a submission for them
-      EG.setOrUpdateSubmission(response.artifact)
 
       // this next part will take care of group submissions, so that when one member of the group gets assessesed then everyone in the group will get that same assessment.
       $.each(response.related_group_submissions_and_assessments, (i, submissionAndAssessment) => {
@@ -1021,6 +1027,9 @@ function initRubricStuff() {
 }
 
 function initKeyCodes() {
+  if (ENV.disable_keyboard_shortcuts) {
+    return
+  }
   const keycodeOptions = {
     keyCodes: 'j k p n c r g',
     ignore: 'input, textarea, embed, object'
@@ -1109,6 +1118,49 @@ function renderSubmissionCommentsDownloadLink(submission) {
     )}/comments.pdf" target="_blank">${htmlEscape(I18n.t('Download Submission Comments'))}</a>`
   }
   return mountPoint
+}
+
+function renderDeleteAttachmentLink($submission_file, attachment) {
+  if (ENV.can_delete_attachments) {
+    const $delete_link = $submission_file.find('a.submission-file-delete')
+    $delete_link.click(function(event) {
+      event.preventDefault()
+      const url = $(this).attr('href')
+      if (
+        confirm(
+          I18n.t(
+            'Deleting a submission file is typically done only when a student posts inappropriate or private material.\n\nThis action is irreversible. Are you sure you wish to delete %{file}?',
+            {file: attachment.display_name}
+          )
+        )
+      ) {
+        $full_width_container.disableWhileLoading(
+          $.ajaxJSON(
+            url,
+            'DELETE',
+            {},
+            _data => {
+              // a more targeted refresh would be preferable but this works (and `EG.showSubmission()` doesn't)
+              window.location.reload()
+            },
+            data => {
+              if (data.status === 'unauthorized') {
+                $.flashError(
+                  I18n.t(
+                    'You do not have permission to delete %{file}. Please contact your account administrator.',
+                    {file: attachment.display_name}
+                  )
+                )
+              } else {
+                $.flashError(I18n.t('Error deleting %{file}', {file: attachment.display_name}))
+              }
+            }
+          )
+        )
+      }
+    })
+    $delete_link.show()
+  }
 }
 
 // Public Variables and Methods
@@ -2062,7 +2114,8 @@ EG = {
             )
         })
         .end()
-        .show()
+      renderDeleteAttachmentLink($submission_file, attachment)
+      $submission_file.show()
       $turnitinScoreContainer = $submission_file.find('.turnitin_score_container')
       assetString = `attachment_${attachment.id}`
       turnitinAsset =
@@ -2860,6 +2913,13 @@ EG = {
   },
 
   addSubmissionComment(draftComment) {
+    // Avoid submitting additional comments if a request is already in progress.
+    // This can happen if the user submits a comment and then switches students
+    // (which attempts to save a draft comment) before the request finishes.
+    if (commentSubmissionInProgress) {
+      return false
+    }
+
     // This is to continue existing behavior of creating finalized comments by default
     if (draftComment === undefined) {
       draftComment = false
@@ -2875,6 +2935,8 @@ EG = {
       // that means that they did not type a comment, attach a file or record any media. so dont do anything.
       return false
     }
+
+    commentSubmissionInProgress = true
     const url = `${assignmentUrl}/${isAnonymous ? 'anonymous_' : ''}submissions/${
       EG.currentStudent[anonymizableId]
     }`
@@ -2909,11 +2971,13 @@ EG = {
       window.setTimeout(() => {
         $rightside_inner.scrollTo($rightside_inner[0].scrollHeight, 500)
       })
+      commentSubmissionInProgress = false
     }
 
     const formError = (data, _xhr, _textStatus, _errorThrown) => {
       EG.handleGradingError(data)
       EG.revertFromFormSubmit({errorSubmitting: true})
+      commentSubmissionInProgress = false
     }
 
     if ($add_a_comment.find("input[type='file']:visible").length) {
@@ -2996,8 +3060,8 @@ EG = {
       return
     }
 
-    const url = $('.update_submission_grade_url').attr('href')
-    const method = $('.update_submission_grade_url').attr('title')
+    const url = ENV.update_submission_grade_url
+    const method = 'POST'
     const formData = {
       'submission[assignment_id]': jsonData.id,
       [`submission[${anonymizableUserId}]`]: EG.currentStudent[anonymizableId],
@@ -3664,7 +3728,8 @@ function renderSettingsMenu() {
     openOptionsModal: showOptionsModal,
     openKeyboardShortcutsModal: showKeyboardShortcutsModal,
     showModerationMenuItem: ENV.grading_role === 'moderator',
-    showHelpMenuItem: ENV.show_help_menu_item
+    showHelpMenuItem: ENV.show_help_menu_item,
+    showKeyboardShortcutsMenuItem: !ENV.disable_keyboard_shortcuts
   }
 
   const mountPoint = document.getElementById(SPEED_GRADER_SETTINGS_MOUNT_POINT)
@@ -3758,6 +3823,8 @@ export default {
       null,
       speedGraderJSONErrorFn
     )
+
+    commentSubmissionInProgress = false
 
     $.when(getGradingPeriods(), speedGraderJsonDfd).then(setupSpeedGrader)
 

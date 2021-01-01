@@ -18,20 +18,20 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-def getImageTagVersion() {
-  def flags = load 'build/new-jenkins/groovy/commit-flags.groovy'
-  return flags.getImageTagVersion()
-}
+library "canvas-builds-library"
 
 pipeline {
   agent { label 'canvas-docker' }
-  options { ansiColor('xterm') }
+  options {
+    ansiColor('xterm')
+    timestamps()
+  }
 
   stages {
     stage('Print Env Variables') {
       steps {
         timeout(time: 20, unit: 'SECONDS') {
-          sh 'build/new-jenkins/print-env-excluding-secrets.sh'
+          cleanAndSetup()
         }
       }
     }

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -24,6 +26,8 @@ describe Api::V1::Submission do
       include Api
       include Api::V1::Submission
       include Rails.application.routes.url_helpers
+
+      attr_writer :current_user
 
       private
 
@@ -559,6 +563,20 @@ describe Api::V1::Submission do
     it 'does not lock the attachment if the assignment is not anonymous' do
       allow(assignment).to receive(:anonymize_students?).and_return(false)
       expect(attachment).not_to be_locked
+    end
+
+    it "does not blow up when a quiz has a prior attachment" do
+      qsub = quiz_with_submission()
+      quiz = qsub.quiz
+      quiz.attachments.create!(
+        display_name: "submissions.zip",
+        uploaded_data: default_uploaded_data,
+        workflow_state: 'zipped',
+        user_id: user.id,
+        locked: quiz.anonymize_students?
+      )
+      fake_controller.current_user = user
+      expect(fake_controller.submission_zip(quiz)).to be_truthy
     end
   end
 end

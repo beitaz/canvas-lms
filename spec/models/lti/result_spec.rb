@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -19,7 +21,7 @@
 require_relative '../../spec_helper'
 
 RSpec.describe Lti::Result, type: :model do
-  let_once(:assignment) { assignment_model }
+  let_once(:assignment) { assignment_model(points_possible: 5) }
 
   context 'when validating' do
     let(:result) { lti_result_model assignment: assignment }
@@ -58,6 +60,51 @@ RSpec.describe Lti::Result, type: :model do
         ActiveRecord::RecordInvalid,
         "Validation failed: Grading progress is not included in the list"
       )
+    end
+
+    describe '#scaled_result_score' do
+      subject { result.scaled_result_score }
+
+      let(:tool_id) { 1 }
+      let(:manual_grader_id) { 2 }
+
+      let(:result) do
+        lti_result_model(
+          assignment: assignment,
+          result_maximum: 1,
+          result_score: 0.5,
+        )
+      end
+
+      before { result.submission.update!(grader_id: tool_id * -1) }
+
+      context 'when the score_given has not been manually changed' do
+        it { is_expected.to eq result.result_score }
+      end
+
+      context 'when result_score is blank' do
+        before { result.update!(result_score: 0) }
+
+        it { is_expected.to eq result.result_score }
+      end
+
+      context 'when the submission is blank' do
+        before { result.update!(submission: nil) }
+
+        it { is_expected.to eq result.result_score }
+      end
+
+      context 'when the score_given was manually updated by a user' do
+        before { result.submission.update!(grader_id: 2, score: 4) }
+
+        it { is_expected.to eq 0.1 }
+
+        context 'when the assignment has 0 points_possible' do
+          before { assignment.update!(points_possible: 0) }
+
+          it { is_expected.to eq result.result_score }
+        end
+      end
     end
 
     describe '#result_maximum' do
@@ -150,6 +197,21 @@ RSpec.describe Lti::Result, type: :model do
         ]
       end
       subject { Lti::Result }
+    end
+  end
+
+  context 'after saving' do
+    let(:result) { lti_result_model assignment: assignment }
+
+    it 'sets root_account_id using submission' do
+      expect(result.root_account_id).to eq assignment.root_account_id
+    end
+
+    it 'sets root_account_id using line_item' do
+      submission = graded_submission_model({ assignment: assignment_model, user: user_model })
+      submission.assignment.root_account_id = nil
+      result = Lti::Result.create!(line_item: line_item_model, user: user_model, created_at: Time.zone.now, updated_at: Time.zone.now, submission: submission)
+      expect(result.root_account_id).to eq result.line_item.root_account_id
     end
   end
 end

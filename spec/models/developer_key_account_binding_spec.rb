@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2016 - present Instructure, Inc.
 #
@@ -200,6 +202,35 @@ RSpec.describe DeveloperKeyAccountBinding, type: :model do
           it 'restores associated external tools' do
             expect(site_admin_key).to receive(:restore_external_tools!)
             subject
+          end
+        end
+      end
+    end
+
+    describe 'after save' do
+      describe 'set root account' do
+        context 'when account is root account' do
+          let(:account) { account_model }
+
+          it 'sets root account equal to account' do
+            dev_key_binding.account = account
+            dev_key_binding.save!
+            expect(dev_key_binding.root_account).to eq account
+          end
+        end
+
+        context 'when account is not root account' do
+          let(:account) {
+            a = account_model
+            a.root_account = Account.create!
+            a.save!
+            a
+          }
+
+          it 'sets root account equal to account\'s root account' do
+            dev_key_binding.account = account
+            dev_key_binding.save!
+            expect(dev_key_binding.root_account).to eq account.root_account
           end
         end
       end

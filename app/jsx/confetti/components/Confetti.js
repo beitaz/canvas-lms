@@ -23,8 +23,9 @@ import {showFlashAlert} from 'jsx/shared/FlashAlert'
 import I18n from 'i18n!confetti'
 
 export default function Confetti() {
+  const [visible, setVisible] = React.useState(true)
   React.useEffect(() => {
-    if (window.ENV.disable_celebrations) {
+    if (window.ENV.disable_celebrations || !visible) {
       return
     }
 
@@ -40,6 +41,7 @@ export default function Confetti() {
       if (forcefulCleanup) {
         forcefulCleanup = clearTimeout(forcefulCleanup)
       }
+      setVisible(false)
     }
 
     confetti = new ConfettiGenerator({
@@ -47,7 +49,7 @@ export default function Confetti() {
       max: 160,
       clock: 50,
       respawn: false,
-      props: ['square', getRandomConfettiFlavor()]
+      props: ['square', getRandomConfettiFlavor()].filter(p => p !== null)
     })
 
     clearConfettiOnSpaceOrEscape = event => {
@@ -71,7 +73,13 @@ export default function Confetti() {
     forcefulCleanup = setTimeout(cleanup, 3000)
 
     return cleanup
-  }, [])
+  }, [visible])
 
-  return <canvas id="confetti-canvas" style={{position: 'fixed', top: 0, left: 0}} />
+  return window.ENV.disable_celebrations || !visible ? null : (
+    <canvas
+      id="confetti-canvas"
+      data-testid="confetti-canvas"
+      style={{position: 'fixed', top: 0, left: 0}}
+    />
+  )
 }

@@ -25,24 +25,6 @@ import polyfill from './polyfill'
 import splitAssetString from 'compiled/str/splitAssetString'
 import closedCaptionLanguages from '../closedCaptionLanguages'
 
-async function getTinyInstance(remoteEditor) {
-  // eslint-disable-next-line no-unused-vars
-  return new Promise((resolve, reject) => {
-    let ed = remoteEditor.mceInstance()
-    if (ed) {
-      resolve(ed)
-    } else {
-      const iid = setInterval(() => {
-        ed = remoteEditor.mceInstance()
-        if (ed) {
-          clearInterval(iid)
-          resolve(ed)
-        }
-      }, 1000)
-    }
-  })
-}
-
 function getTrayProps() {
   if (!ENV.context_asset_string) {
     return null
@@ -58,6 +40,10 @@ function getTrayProps() {
     contextType = 'user'
   } else {
     ;[contextType, contextId] = splitAssetString(ENV.context_asset_string, false)
+    if (contextType === 'account') {
+      contextType = 'user'
+      contextId = userId
+    }
   }
 
   return {
@@ -87,26 +73,13 @@ const RCELoader = {
     const renderingTarget = this.getRenderingTarget(textarea, tinyMCEInitOptions.getRenderingTarget)
     const propsForRCE = this.createRCEProps(textarea, tinyMCEInitOptions)
 
-    if (ENV?.FEATURES?.la_620_old_rce_init_fix) {
-      // in the old rce using an old tinymce, it's possible renderIntoDiv's callback is called
-      // before tinymce adds the new editor to its internal list, and remoteEditor.mceInstance()
-      // wil return null. Waiting on getTinyInstance works around that.
-      // Put it back to the simple `else` case once the old rce is no longer used
-      this.loadRCE(RCE => {
-        RCE.renderIntoDiv(renderingTarget, propsForRCE, async remoteEditor => {
-          const tinyed = await getTinyInstance(remoteEditor)
-          tinyed.on('init', () => callback(textarea, polyfill.wrapEditor(remoteEditor)))
-        })
+    this.loadRCE(RCE => {
+      RCE.renderIntoDiv(renderingTarget, propsForRCE, remoteEditor => {
+        remoteEditor
+          .mceInstance()
+          .on('init', () => callback(textarea, polyfill.wrapEditor(remoteEditor)))
       })
-    } else {
-      this.loadRCE(RCE => {
-        RCE.renderIntoDiv(renderingTarget, propsForRCE, remoteEditor => {
-          remoteEditor
-            .mceInstance()
-            .on('init', () => callback(textarea, polyfill.wrapEditor(remoteEditor)))
-        })
-      })
-    }
+    })
   },
 
   loadSidebarOnTarget(target, callback) {
@@ -231,7 +204,7 @@ const RCELoader = {
    */
   createRCEProps(textarea, tinyMCEInitOptions) {
     const width = textarea.offsetWidth
-    const height = textarea.offsetHeight
+    const height = textarea.offsetHeight || 400
 
     if (height) {
       tinyMCEInitOptions.tinyOptions = {
@@ -275,7 +248,8 @@ const RCELoader = {
       textareaId: textarea.id,
       trayProps: getTrayProps(),
       languages,
-      autosave
+      autosave,
+      instRecordDisabled: ENV.RICH_CONTENT_INST_RECORD_TAB_DISABLED
     }
   }
 }

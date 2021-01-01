@@ -38,8 +38,8 @@ export default class KeyboardNavDialog extends View
   bindOpenKeys: ->
     activeElement = null
     $(document).keydown((e) =>
-      commaOrQuestionMark = e.keyCode == 188 || e.keyCode == 191
-      if (commaOrQuestionMark && !$(e.target).is(":input"))
+      isQuestionMark = e.keyCode == 191 && e.shiftKey
+      if (isQuestionMark && !$(e.target).is(":input") && !ENV.disable_keyboard_shortcuts)
         e.preventDefault()
         if(@$el.is(":visible"))
           @$el.dialog("close")

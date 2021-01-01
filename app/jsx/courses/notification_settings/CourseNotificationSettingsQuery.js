@@ -16,7 +16,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-import {COURSE_NOTIFICATIONS_ENABLED_QUERY} from './graphqlData/Queries'
+import {COURSE_NOTIFICATIONS_QUERY} from './graphqlData/Queries'
 import CourseNotificationSettingsManager from './CourseNotificationSettingsManager'
 import errorShipUrl from 'jsx/shared/svg/ErrorShip.svg'
 import GenericErrorPage from '../../shared/components/GenericErrorPage'
@@ -27,8 +27,11 @@ import {string} from 'prop-types'
 import {useQuery} from 'react-apollo'
 
 export default function CourseNotificationSettingsQuery(props) {
-  const {loading, error, data} = useQuery(COURSE_NOTIFICATIONS_ENABLED_QUERY, {
-    variables: {courseId: props.courseId}
+  const {loading, error, data} = useQuery(COURSE_NOTIFICATIONS_QUERY, {
+    variables: {
+      courseId: props.courseId,
+      userId: props.userId
+    }
   })
 
   if (loading) return <LoadingIndicator />
@@ -44,11 +47,15 @@ export default function CourseNotificationSettingsQuery(props) {
   return (
     <CourseNotificationSettingsManager
       courseId={props.courseId}
-      enabled={data?.course?.notificationPreferencesEnabled}
+      courseName={props.courseName}
+      enabled={data?.legacyNode?.notificationPreferencesEnabled}
+      notificationPreferences={data?.legacyNode?.notificationPreferences}
     />
   )
 }
 
 CourseNotificationSettingsQuery.propTypes = {
-  courseId: string.isRequired
+  courseId: string.isRequired,
+  courseName: string.isRequired,
+  userId: string.isRequired
 }

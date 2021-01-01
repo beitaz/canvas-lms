@@ -26,7 +26,7 @@ describe('HelpTray', () => {
     {
       text: 'Search the Canvas Guides',
       subtext: 'Find answers to common questions',
-      url: 'http://community.canvaslms.com/community/answers/guides',
+      url: 'https://community.canvaslms.com/t5/Canvas/ct-p/canvas',
       type: 'default',
       id: 'search_the_canvas_guides'
     },
@@ -44,6 +44,14 @@ describe('HelpTray', () => {
     links,
     hasLoaded: true
   }
+
+  beforeEach(() => {
+    window.ENV = {FEATURES: {featured_help_links: true}}
+  })
+
+  afterEach(() => {
+    window.ENV = {}
+  })
 
   it('renders loading spinner', () => {
     const {getByTitle, queryByText} = render(<HelpTray {...props} hasLoaded={false} />)

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -19,9 +21,10 @@
 require "bigdecimal"
 
 class GradeCalculator
+  attr_reader :gradable_assignments
   attr_accessor :assignments, :groups
 
-  def initialize(user_ids, course, opts = {})
+  def initialize(user_ids, course, **opts)
     Rails.logger.debug "GRADE CALCULATOR STARTS (initialize): #{Time.zone.now.to_i}"
     Rails.logger.debug "GRADE CALCULATOR - caller: #{caller(1..1).first}"
     opts = opts.reverse_merge(
@@ -47,7 +50,22 @@ class GradeCalculator
     # if we're updating a grading period score, we also need to update the
     # overall course score
     @update_course_score = @grading_period.present? && opts[:update_course_score]
-    @assignments = opts[:assignments] || @course.assignments.published.gradeable.to_a
+    @ignore_unposted_anonymous = opts.fetch(
+      :ignore_unposted_anonymous,
+      @course.root_account.feature_enabled?(:grade_calc_ignore_unposted_anonymous)
+    )
+    @gradable_assignments = (opts[:assignments] || @course.assignments.published.gradeable).to_a
+
+    @assignments = if @ignore_unposted_anonymous
+      Assignment.preload_unposted_anonymous_submissions(@gradable_assignments)
+
+      # Ignore anonymous assignments with unposted submissions in the grade calculation
+      # so that we don't break anonymity prior to the assignment being posted
+      # (which is when identities are revealed)
+      @gradable_assignments.reject(&:unposted_anonymous_submissions?)
+    else
+      @gradable_assignments
+    end
 
     @user_ids = Array(user_ids).map { |id| Shard.relative_id_for(id, Shard.current, @course.shard) }
     @current_updates = {}
@@ -69,7 +87,7 @@ class GradeCalculator
   end
 
   # recomputes the scores and saves them to each user's Enrollment
-  def self.recompute_final_score(user_ids, course_id, compute_score_opts = {})
+  def self.recompute_final_score(user_ids, course_id, **compute_score_opts)
     Rails.logger.debug "GRADE CALCULATOR STARTS (recompute_final_score): #{Time.zone.now.to_i}"
     Rails.logger.debug "GRADE CALCULATOR - caller: #{caller(1..1).first}"
     user_ids = Array(user_ids).uniq.map(&:to_i)
@@ -89,7 +107,7 @@ class GradeCalculator
       periods: periods
     )
     user_ids.sort.in_groups_of(100, false) do |user_ids_group|
-      GradeCalculator.new(user_ids_group, course, opts).compute_and_save_scores
+      GradeCalculator.new(user_ids_group, course, **opts).compute_and_save_scores
     end
   end
 
@@ -142,16 +160,38 @@ class GradeCalculator
     @effective_due_dates ||= EffectiveDueDates.for_course(@course, @assignments).filter_students_to(@user_ids)
   end
 
+  def observer_ids
+    @observer_ids ||= ObserverEnrollment.where.not(workflow_state: [:rejected, :deleted]).
+      where(course: @course).
+      pluck(:user_id).
+      uniq
+  end
+
   def create_course_grade_alerts_and_live_events(scores)
     @course.shard.activate do
       ActiveRecord::Associations::Preloader.new.preload(scores, :enrollment)
       # Make only one alert per user even if they have multiple enrollments (sections in same course)
       scores = scores.uniq{|s| s.enrollment.user_id}
-      reloaded_scores = Score.where(id: scores.map(&:id)).index_by(&:id)
-      scores.each do |score|
-        # Note: only the old score has enrollment pre-loaded
-        create_course_grade_live_event(score, reloaded_scores[score.id]) if @emit_live_event
-        create_course_grade_alert(score, reloaded_scores[score.id])
+
+      scores.each_slice(100) do |scores_batch|
+        scores_info = scores_batch.each_with_object({ student_ids: [], ids: [] }) do |score, memo|
+          memo[:student_ids] << score.enrollment.user_id
+          memo[:ids] << score.id
+        end
+
+        preloaded_thresholds = ObserverAlertThreshold.active.
+          where(user_id: scores_info[:student_ids], alert_type: ['course_grade_high', 'course_grade_low']).
+          group_by(&:user_id)
+
+        reloaded_scores = Score.where(id: scores_info[:ids]).index_by(&:id)
+        scores_batch.each do |score|
+          reloaded_score = reloaded_scores[score.id]
+          # Note: only the old score has enrollment pre-loaded
+          create_course_grade_live_event(score, reloaded_score) if @emit_live_event
+
+          thresholds = preloaded_thresholds.fetch(score.enrollment.user_id, [])
+          create_course_grade_alert(score, reloaded_score, thresholds)
+        end
       end
     end
   end
@@ -164,15 +204,12 @@ class GradeCalculator
     Canvas::LiveEvents.course_grade_change(score, old_score_values, old_score.enrollment)
   end
 
-  def create_course_grade_alert(old_score, score)
-    # Use preloaded enrollment in old_score
-    thresholds = ObserverAlertThreshold.active.where(student: old_score.enrollment.user_id, alert_type: ['course_grade_high', 'course_grade_low'])
-
+  def create_course_grade_alert(old_score, score, thresholds)
     thresholds.each do |threshold|
       next unless threshold.did_pass_threshold(old_score.current_score, score.current_score)
-      next unless threshold.observer.enrollments.where(course_id: @course.id).first.present?
+      next unless observer_ids.include?(threshold.observer_id)
 
-      ObserverAlert.create(observer: threshold.observer, student: threshold.student,
+      ObserverAlert.create(observer_id: threshold.observer_id, user_id: threshold.user_id,
         observer_alert_threshold: threshold,
         context: @course, action_date: score.updated_at, alert_type: threshold.alert_type,
         title: I18n.t("Course grade: %{grade}% in %{course_code}", {
@@ -305,7 +342,7 @@ class GradeCalculator
     @submissions_by_user ||= submissions.group_by {|s| Shard.relative_id_for(s.user_id, Shard.current, @course.shard) }
   end
 
-  def compute_branch(opts = {})
+  def compute_branch(**opts)
     opts = opts.reverse_merge(
       groups: @groups,
       grading_period: @grading_period,
@@ -314,6 +351,7 @@ class GradeCalculator
       assignments: @assignments,
       emit_live_event: @emit_live_event,
       ignore_muted: @ignore_muted,
+      ignore_unposted_anonymous: @ignore_unposted_anonymous,
       periods: grading_periods_for_course,
       effective_due_dates: effective_due_dates,
       enrollments: enrollments,
@@ -321,7 +359,7 @@ class GradeCalculator
       only_update_course_gp_metadata: @only_update_course_gp_metadata,
       only_update_points: @only_update_points
     )
-    GradeCalculator.new(@user_ids, @course, opts).compute_and_save_scores
+    GradeCalculator.new(@user_ids, @course, **opts).compute_and_save_scores
   end
 
   def calculate_hidden_scores
@@ -443,15 +481,13 @@ class GradeCalculator
     return if @grading_period   # only update score statistics when calculating course scores
     return unless @ignore_muted # only update when calculating final scores
 
-    AssignmentScoreStatisticsGenerator.update_score_statistics_in_singleton(@course.id)
+    ScoreStatisticsGenerator.update_score_statistics_in_singleton(@course.id)
   end
 
   def save_scores
     return if @current_updates.empty? && @final_updates.empty?
     return if joined_enrollment_ids.blank?
     return if @grading_period && @grading_period.deleted?
-
-    @course.touch
 
     save_scores_in_transaction
   end
@@ -541,13 +577,14 @@ class GradeCalculator
           (
             enrollment_id, grading_period_id,
             #{columns_to_insert_or_update[:columns].join(', ')},
-            course_score, created_at, updated_at
+            course_score, root_account_id, created_at, updated_at
           )
           SELECT
             enrollments.id as enrollment_id,
             #{@grading_period.try(:id) || 'NULL'} as grading_period_id,
             #{columns_to_insert_or_update[:insert_values].join(', ')},
             #{@grading_period ? 'FALSE' : 'TRUE'} AS course_score,
+            #{@course.root_account_id} AS root_account_id,
             #{updated_at} as created_at,
             #{updated_at} as updated_at
           FROM #{Enrollment.quoted_table_name} enrollments
@@ -557,9 +594,13 @@ class GradeCalculator
       DO UPDATE SET
           #{columns_to_insert_or_update[:update_values].join(', ')},
           updated_at = excluded.updated_at,
+          root_account_id = #{@course.root_account_id},
           -- if workflow_state was previously deleted for some reason, update it to active
           workflow_state = COALESCE(NULLIF(excluded.workflow_state, 'deleted'), 'active')
     ")
+  rescue ActiveRecord::Deadlocked => e
+    Canvas::Errors.capture_exception(:grade_calcuator, e, :warn)
+    raise Delayed::RetriableError, "Deadlock in upserting course or grading period scores"
   end
 
   def save_course_and_grading_period_metadata
@@ -637,13 +678,14 @@ class GradeCalculator
       INSERT INTO #{Score.quoted_table_name} (
         enrollment_id, assignment_group_id,
         #{assignment_group_columns_to_insert_or_update[:value_names].join(', ')},
-        course_score, created_at, updated_at
+        course_score, root_account_id, created_at, updated_at
       )
         SELECT
           val.enrollment_id AS enrollment_id,
           val.assignment_group_id as assignment_group_id,
           #{assignment_group_columns_to_insert_or_update[:insert_columns].join(', ')},
           FALSE AS course_score,
+          #{@course.root_account_id} AS root_account_id,
           #{updated_at} AS created_at,
           #{updated_at} AS updated_at
         FROM (VALUES #{score_values}) val
@@ -652,10 +694,12 @@ class GradeCalculator
             assignment_group_id,
             #{assignment_group_columns_to_insert_or_update[:value_names].join(', ')}
           )
+        ORDER BY enrollment_id, assignment_group_id
       ON CONFLICT (enrollment_id, assignment_group_id) WHERE assignment_group_id IS NOT NULL
       DO UPDATE SET
         #{assignment_group_columns_to_insert_or_update[:update_columns].join(', ')},
         updated_at = excluded.updated_at,
+        root_account_id = #{@course.root_account_id},
         workflow_state = COALESCE(NULLIF(excluded.workflow_state, 'deleted'), 'active')
     ")
 
@@ -677,6 +721,7 @@ class GradeCalculator
           LEFT OUTER JOIN #{Score.quoted_table_name} scores ON
             scores.enrollment_id = val.enrollment_id AND
             scores.assignment_group_id = val.assignment_group_id
+          ORDER BY score_id
         ON CONFLICT (score_id)
         DO UPDATE SET
           calculation_details = excluded.calculation_details,
@@ -684,6 +729,9 @@ class GradeCalculator
         ;
       ")
     end
+  rescue ActiveRecord::Deadlocked => e
+    Canvas::Errors.capture_exception(:grade_calculator, e, :warn)
+    raise Delayed::RetriableError, "Deadlock in upserting assignment group scores"
   end
 
   # returns information about assignments groups in the form:
@@ -751,8 +799,8 @@ class GradeCalculator
       kept = drop_assignments(group_submissions, group.rules_hash)
       dropped_submissions = (group_submissions - kept).map { |s| s[:submission]&.id }.compact
 
-      score, possible = kept.reduce([0, 0]) { |(s_sum,p_sum),s|
-        [s_sum + s[:score], p_sum + s[:total]]
+      score, possible = kept.reduce([0.0, 0.0]) { |(s_sum,p_sum),s|
+        [s_sum.to_d + s[:score].to_d, p_sum.to_d + s[:total].to_d]
       }
 
       {

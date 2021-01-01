@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -416,6 +418,41 @@ describe RubricAssociation do
         purpose: "grading"
       )
       expect(ra).not_to be_auditable
+    end
+  end
+
+  describe 'create' do
+    let(:root_account) { Account.default }
+
+    it 'sets the root_account_id using course context' do
+      rubric_association_model
+      expect(@rubric_association.root_account_id).to eq @course.root_account_id
+    end
+
+    it 'sets the root_account_id using root account' do
+      rubric_association_model({context: root_account})
+      expect(@rubric_association.root_account_id).to eq root_account.id
+    end
+
+    it 'sets the root_account_id using sub account' do
+      sub_account = root_account.sub_accounts.create!
+      rubric_association_model({context: sub_account})
+      expect(@rubric_association.root_account_id).to eq sub_account.root_account_id
+    end
+  end
+
+  describe "workflow_state" do
+    it "is set to active by default" do
+      course = Course.create!
+      rubric = course.rubrics.create!
+      association = RubricAssociation.create!(
+        rubric: rubric,
+        association_object: course,
+        context: course,
+        purpose: "bookmark"
+      )
+
+      expect(association).to be_active
     end
   end
 end

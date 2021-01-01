@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 Instructure, Inc.
 #
@@ -269,7 +271,6 @@ describe DiscussionTopicsController, type: :request do
     end
 
     it "should create a topic with all the bells and whistles" do
-      @course.root_account.enable_feature!(:student_planner)
       post_at = 1.month.from_now
       lock_at = 2.months.from_now
       todo_date = 1.day.from_now.change(sec: 0)
@@ -721,6 +722,59 @@ describe DiscussionTopicsController, type: :request do
             })
 
           expect(json.count).to eq(0)
+        end
+
+        describe "with multiple sections" do
+          before(:once) do
+            @section2 = @course.course_sections.create!(name: 'test section 2')
+
+            @announcement2 = @course.announcements.create!(:user => @teacher, message: 'hello section 2')
+            @announcement2.is_section_specific = true
+            @announcement2.course_sections = [@section2]
+            @announcement2.save!
+
+            student_in_section(@section2, user: @student2)
+          end
+
+          it "paginates visible items" do
+            json = api_call_as_user(
+              @student2,
+              :get,
+              api_v1_course_discussion_topics_url(@course),
+              {
+                controller: "discussion_topics",
+                action: "index",
+                format: "json",
+                course_id: @course.id.to_s,
+                per_page: "1",
+                only_announcements: 1
+              }
+            )
+            expect(!!response.headers['Link'].split(',').last.include?("&page=2&")).to eq false
+            expect(json.count).to eq 1
+            expect(json.first["id"]).to eq @announcement2.id
+          end
+
+          # rubocop:disable RSpec/NestedGroups
+          context "as a user that can view all sections" do
+            it "includes all announcements" do
+              json = api_call_as_user(
+                @teacher,
+                :get,
+                api_v1_course_discussion_topics_url(@course),
+                {
+                  controller: "discussion_topics",
+                  action: "index",
+                  format: "json",
+                  course_id: @course.id.to_s,
+                  only_announcements: 1
+                }
+              )
+              expect(json.count).to eq 2
+              expect(json.map { |i| i["id"] }).to match_array [@announcement.id, @announcement2.id]
+            end
+          end
+          # rubocop:enable RSpec/NestedGroups
         end
       end
     end
@@ -2357,7 +2411,7 @@ describe DiscussionTopicsController, type: :request do
 
     def call_mark_all_as_read_state(new_state, opts = {})
       method = new_state == 'read' ? :put : :delete
-      url = "/api/v1/courses/#{@course.id}/discussion_topics/#{@topic.id}/read_all.json"
+      url = +"/api/v1/courses/#{@course.id}/discussion_topics/#{@topic.id}/read_all.json"
       expected_params = {:controller => 'discussion_topics_api', :action => "mark_all_#{new_state}", :format => 'json',
                          :course_id => @course.id.to_s, :topic_id => @topic.id.to_s}
       if opts.has_key?(:forced)

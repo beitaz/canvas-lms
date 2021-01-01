@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -19,13 +21,19 @@
 require 'json/jwt'
 
 module Canvas::Security
-  class InvalidToken < RuntimeError
+  class AuthenticationError < RuntimeError
+    def response_status
+      401
+    end
   end
 
-  class TokenExpired < RuntimeError
+  class InvalidToken < AuthenticationError
   end
 
-  class InvalidJwtKey < RuntimeError
+  class TokenExpired < AuthenticationError
+  end
+
+  class InvalidJwtKey < AuthenticationError
   end
 
   def self.encryption_key
@@ -115,6 +123,12 @@ module Canvas::Security
   def self.hmac_sha1(str, encryption_key = nil)
     OpenSSL::HMAC.hexdigest(
       OpenSSL::Digest.new('sha1'), (encryption_key || self.encryption_key), str
+    )
+  end
+
+  def self.hmac_sha512(str, encryption_key = nil)
+    OpenSSL::HMAC.hexdigest(
+      OpenSSL::Digest.new('sha512'), (encryption_key || self.encryption_key), str
     )
   end
 
@@ -228,7 +242,7 @@ module Canvas::Security
   end
 
   def self.base64_decode(token_string)
-    utf8_string = token_string.force_encoding(Encoding::UTF_8)
+    utf8_string = token_string.dup.force_encoding(Encoding::UTF_8)
     Base64.decode64(utf8_string.encode('ascii-8bit'))
   end
 

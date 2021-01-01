@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -20,7 +22,7 @@ class NotificationPolicy < ActiveRecord::Base
 
   include NotificationPreloader
   belongs_to :communication_channel
-  has_many :delayed_messages, :dependent => :destroy
+  has_many :delayed_messages, inverse_of: :notification_policy, :dependent => :destroy
 
   validates_presence_of :communication_channel_id, :frequency
   validates_inclusion_of :frequency, in: [Notification::FREQ_IMMEDIATELY,
@@ -75,8 +77,8 @@ class NotificationPolicy < ActiveRecord::Base
       frequency = params[:frequency]
       cc = user.communication_channels.find(params[:channel_id])
 
-      # Find any existing NotificationPolicies for the category and the channel. If frequency is 'never', delete the
-      # entry. If other than that, create or update the entry.
+      # Find any existing NotificationPolicies for the category and the channel.
+      # create or update the entry.
       NotificationPolicy.transaction do
         notifications.each do |notification_id|
           scope = user.notification_policies.
@@ -154,7 +156,7 @@ class NotificationPolicy < ActiveRecord::Base
   end
 
   # frequencies is an optional hash; key is notification_name (underscore)
-  def self.find_all_for(communication_channel, frequencies = {})
+  def self.find_all_for(communication_channel, frequencies = {}, context_type: nil)
     frequencies = Hash[frequencies.map { |name, frequency| [BroadcastPolicy.notification_finder.by_name(name.titleize), frequency] }]
     communication_channel.shard.activate do
       policies = communication_channel.notification_policies.to_a
@@ -187,6 +189,7 @@ class NotificationPolicy < ActiveRecord::Base
         np ||= communication_channel.notification_policies.where(notification_id: notification).first
         policies << np
       end
+      policies = policies.select { |np| np.notification&.is_course_type? } if context_type == 'Course'
       policies
     end
   end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -19,6 +21,10 @@ require_relative '../../common'
 require_relative '../../grades/pages/gradebook_page'
 require_relative '../../grades/pages/speedgrader_page'
 
+# total course enrollments = 1 teacher + student(s)
+# the following array =
+# [no of student enrollments, no of assignments in each course:assignment_group]
+# So @courses[0] will have 4001 total enrollments and 50 assignments
 student_assignments = [
   [4000, 50],
   [2000, 50],
@@ -42,6 +48,7 @@ describe 'Gradebook performance' do
     @course3 = @courses[2]
     @course4 = @courses[3]
 
+    # enroll a teacher in each course
     @teacher = course_with_teacher(course: @courses.first, name: 'Teacher Boss1', active_user: true, active_enrollment: true).user
     (1..3).each do |i|
       @courses[i].enroll_user(@teacher, 'TeacherEnrollment', allow_multiple_enrollments: true, enrollment_state: 'active')
@@ -51,12 +58,16 @@ describe 'Gradebook performance' do
 
     @assignments_array = []
     (0..3).each do |i|
+      # enroll students in each course
       students = @students.first(student_assignments[i][0])
       create_enrollments(@courses[i], students, allow_multiple_enrollments: true)
 
+      # create an assignment group for each course
       group = AssignmentGroup.suspend_callbacks(:update_student_grades) do
         @courses[i].assignment_groups.create! name: 'assignments'
       end
+
+      # create no of assignments in each course:assignment_group
       assignments = create_assignments(
         [@courses[i].id],
         student_assignments[i][1],
@@ -73,6 +84,7 @@ describe 'Gradebook performance' do
         students.map do |student|
           grade = grades_sample.sample
           {
+            course_id: @courses[index].id,
             assignment_id: id,
             user_id: student.id,
             body: "hello",
@@ -105,7 +117,7 @@ describe 'Gradebook performance' do
       wait_for_ajaximations
       page_load_end_time = Time.zone.now
       load_time = page_load_end_time - page_load_start_time
-      puts "200,000 submissions, gradebook loads in less than 25 seconds.  Load time: #{load_time}"
+      puts "\nPage:Gradebook Submissions:200,000 Expected_Load:25 Actual_Load:#{load_time}"
       expect(load_time).to be < 25
     end
 
@@ -116,7 +128,7 @@ describe 'Gradebook performance' do
       wait_for_ajaximations
       page_load_end_time = Time.zone.now
       load_time = page_load_end_time - page_load_start_time
-      puts "200,000 submissions, speedgrader loads in less than 100 seconds.  Load time: #{load_time}"
+      puts "\nPage:Speedgrader Submissions:200,000 Expected_Load:100 Actual_Load:#{load_time}"
       expect(load_time).to be < 100
     end
   end
@@ -128,7 +140,7 @@ describe 'Gradebook performance' do
       wait_for_ajaximations
       page_load_end_time = Time.zone.now
       load_time = page_load_end_time - page_load_start_time
-      puts "100,000 submissions 2000x50, gradebook loads in less than 25 seconds.  Load time: #{load_time}"
+      puts "\nPage:Gradebook Submissions:100,000_2000x50 Expected_Load:25 Actual_Load:#{load_time}"
       expect(load_time).to be < 25
     end
 
@@ -138,7 +150,7 @@ describe 'Gradebook performance' do
       wait_for_ajaximations
       page_load_end_time = Time.zone.now
       load_time = page_load_end_time - page_load_start_time
-      puts "100,000 submissions 2000x50, speedgrader loads in less than 45 seconds.  Load time: #{load_time}"
+      puts "\nPage:Speedgrader Submissions:100,000_2000x50 Expected_Load:45 Actual_Load:#{load_time}"
       expect(load_time).to be < 45
     end
   end
@@ -151,7 +163,7 @@ describe 'Gradebook performance' do
       wait_for_ajaximations
       page_load_end_time = Time.zone.now
       load_time = page_load_end_time - page_load_start_time
-      puts "100,000 submissions 1000x100, gradebook loads in less than 25 seconds.  Load time: #{load_time}"
+      puts "\nPage:Gradebook Submissions:100,000_1000x100 Expected_Load:25 Actual_Load:#{load_time}"
       expect(load_time).to be < 25
     end
 
@@ -161,7 +173,7 @@ describe 'Gradebook performance' do
       wait_for_ajaximations
       page_load_end_time = Time.zone.now
       load_time = page_load_end_time - page_load_start_time
-      puts "100,000 submissions 2000x50, speedgrader loads in less than 19 seconds.  Load time: #{load_time}"
+      puts "\nPage:Speedgrader Submissions:100,000_2000x50 Expected_Load:19 Actual_Load:#{load_time}"
       expect(load_time).to be < 19
     end
   end
@@ -173,7 +185,7 @@ describe 'Gradebook performance' do
       wait_for_ajaximations
       page_load_end_time = Time.zone.now
       load_time = page_load_end_time - page_load_start_time
-      puts "10,000 submissions, gradebook loads in less than 18 seconds.  Load time: #{load_time}"
+      puts "\nPage:Gradebook Submissions:10,000 Expected_Load:18 Actual_Load:#{load_time}"
       expect(load_time).to be < 18
     end
 
@@ -183,7 +195,7 @@ describe 'Gradebook performance' do
       wait_for_ajaximations
       page_load_end_time = Time.zone.now
       load_time = page_load_end_time - page_load_start_time
-      puts "10,000 submissions, speedgrader loads in less than 10 seconds.  Load time: #{load_time}"
+      puts "\nPage:Speedgrader Submissions:10,000 Expected_Load:10 Actual_Load:#{load_time}"
       expect(load_time).to be < 10
     end
   end

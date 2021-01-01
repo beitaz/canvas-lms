@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -31,6 +33,8 @@ describe RubricAssessment do
     rubric_model
     @association = @rubric.associate_with(@assignment, @course, :purpose => 'grading', :use_for_grading => true)
   end
+
+  it { is_expected.to have_many(:learning_outcome_results).dependent(:destroy) }
 
   it "should htmlify the rating comments" do
     comment = "Hi, please see www.example.com.\n\nThanks."
@@ -213,6 +217,23 @@ describe RubricAssessment do
         outcome_with_rubric
         @association = @rubric.associate_with(@assignment, @course, :purpose => 'grading', :use_for_grading => true)
         @course.enroll_student(@student, enrollment_state: :active)
+      end
+
+      it 'assessing a rubric with outcome criterion should increment datadog counter' do
+        expect(InstStatsd::Statsd).to receive(:increment).with('learning_outcome_result.create')
+        @outcome.update!(data: nil)
+        criterion_id = "criterion_#{@rubric.data[0][:id]}".to_sym
+        @association.assess({
+          :user => @student,
+          :assessor => @teacher,
+          :artifact => @assignment.find_or_create_submission(@student),
+          :assessment => {
+            :assessment_type => 'grading',
+            criterion_id => {
+              :points => '3'
+            }
+          }
+        })
       end
 
       it 'should use default ratings for scoring' do
@@ -659,6 +680,26 @@ describe RubricAssessment do
       RoleOverride.create!(:context => @account, :permission => 'manage_courses', :role => role, :enabled => false)
       @account.account_users.create!(user: @user, role: role)
       expect(@assessment.grants_right?(@user, :read)).to eq true
+    end
+  end
+
+  describe 'create' do
+    it 'sets the root_account_id using rubric' do
+      assessment = @association.assess({
+        :user => @student,
+        :assessor => @teacher,
+        :artifact => @assignment.find_or_create_submission(@student),
+        :assessment => {
+          :assessment_type => 'grading',
+          :criterion_crit1 => {
+            :points => 5,
+            :comments => 'abcdefg',
+          }
+        }
+      })
+
+      expect(assessment.root_account_id).to_not be_nil
+      expect(assessment.root_account_id).to eq @rubric.root_account_id
     end
   end
 end

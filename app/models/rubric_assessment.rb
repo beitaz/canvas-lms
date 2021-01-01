@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -30,6 +32,7 @@ class RubricAssessment < ActiveRecord::Base
   belongs_to :artifact, touch: true,
              polymorphic: [:submission, :assignment, { provisional_grade: 'ModeratedGrading::ProvisionalGrade' }]
   has_many :assessment_requests, :dependent => :destroy
+  has_many :learning_outcome_results, as: :artifact, :dependent => :destroy
   serialize :data
 
   simply_versioned
@@ -38,6 +41,7 @@ class RubricAssessment < ActiveRecord::Base
 
   before_save :update_artifact_parameters
   before_save :htmlify_rating_comments
+  before_create :set_root_account_id
   after_save :update_assessment_requests, :update_artifact
   after_save :track_outcomes
 
@@ -46,7 +50,7 @@ class RubricAssessment < ActiveRecord::Base
     peer_review = self.assessment_type == "peer_review"
     provisional_grade = self.artifact_type == "ModeratedGrading::ProvisionalGrade"
     update_outcomes = outcome_ids.present? && !peer_review && !provisional_grade
-    send_later_if_production(:update_outcomes_for_assessment, outcome_ids) if update_outcomes
+    delay_if_production.update_outcomes_for_assessment(outcome_ids) if update_outcomes
   end
 
   def update_outcomes_for_assessment(outcome_ids=[])
@@ -234,7 +238,7 @@ class RubricAssessment < ActiveRecord::Base
   end
 
   def score
-    self[:score]&.round(4)
+    self[:score]&.round(Rubric::POINTS_POSSIBLE_PRECISION)
   end
 
   def assessor_name
@@ -276,4 +280,7 @@ class RubricAssessment < ActiveRecord::Base
     end
   end
 
+  def set_root_account_id
+    self.root_account_id ||= self.rubric&.root_account_id
+  end
 end

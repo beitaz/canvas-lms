@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 Instructure, Inc.
 #
@@ -144,7 +146,7 @@ module Lti
         migration_selection_params
       when 'editor_button'
         editor_button_params
-      when 'resource_selection', 'link_selection', 'assignment_selection'
+      when 'resource_selection', 'link_selection', 'assignment_selection', 'submission_type_selection'
         lti_launch_selection_params
       when 'collaboration'
         collaboration_params
@@ -154,7 +156,7 @@ module Lti
         {}
       else
         # TODO: we _could_, if configured, have any other placements return to the content migration page...
-        raise "Content-Item not supported at this placement"
+        raise ::Lti::Errors::UnsupportedPlacement, "Content-Item not supported at this placement"
       end
     end
 

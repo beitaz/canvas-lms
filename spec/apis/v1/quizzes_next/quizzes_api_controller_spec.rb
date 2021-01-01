@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -175,6 +177,17 @@ describe QuizzesNext::QuizzesApiController, type: :request do
             "<http://www.example.com/api/v1/courses/#{@course.id}/all_quizzes?page=1&per_page=2>; rel=\"first\","\
             "<http://www.example.com/api/v1/courses/#{@course.id}/all_quizzes?page=4&per_page=2>; rel=\"last\""
           )
+        end
+
+        it "also caches link header" do
+          enable_cache do
+            subject
+            link_header = response.headers['Link']
+            cache_key = Rails.cache.instance_variable_get(:@data).keys.grep(/quizzes\.next/).first.dup
+            cache_key.sub!(/^rails60:/, '')
+            cached_content = Rails.cache.read(cache_key)
+            expect(cached_content[:link]).to eq(link_header)
+          end
         end
       end
     end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -30,6 +32,7 @@ describe "users/grades" do
       course.enable_feature!(:final_grades_override)
       view_context(course, teacher)
       student_enrollment.scores.create!(course_score: true, current_score: 73.0, override_score: 89.2)
+      ScoreStatisticsGenerator.update_course_score_statistic(course.id)
       current_active_enrollments = teacher.
         enrollments.
         current.

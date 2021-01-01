@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -42,7 +44,7 @@ class AuthenticationProvider::Oauth2 < AuthenticationProvider::Delegated
     client.auth_code.authorize_url({ redirect_uri: redirect_uri, state: state }.merge(authorize_options))
   end
 
-  def get_token(code, redirect_uri)
+  def get_token(code, redirect_uri, _params)
     client.auth_code.get_token(code, { redirect_uri: redirect_uri }.merge(token_options))
   end
 

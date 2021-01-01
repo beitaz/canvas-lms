@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -244,6 +246,7 @@ describe 'creating a quiz' do
 
       context 'without due dates' do
         it 'should block when enabled' do
+          @course.course_sections.create!(name: section_to_set)
           new_quiz
           select_last_override_section(section_to_set)
           set_value(due_date_input_fields.first, "")

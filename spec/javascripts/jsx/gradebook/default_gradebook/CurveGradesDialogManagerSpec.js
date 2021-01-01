@@ -18,6 +18,7 @@
 
 import $ from 'jquery'
 import CurveGradesDialog from 'compiled/shared/CurveGradesDialog'
+import AsyncComponents from 'jsx/gradebook/default_gradebook/AsyncComponents'
 import CurveGradesDialogManager from 'jsx/gradebook/default_gradebook/CurveGradesDialogManager'
 import I18n from 'i18n!gradebook'
 import 'compiled/jquery.rails_flash_notifications'
@@ -25,12 +26,13 @@ import 'compiled/jquery.rails_flash_notifications'
 const {createCurveGradesAction} = CurveGradesDialogManager
 
 QUnit.module('CurveGradesDialogManager.createCurveGradesAction.isDisabled', {
-  props({points_possible, grading_type, submissionsLoaded}) {
+  props({points_possible, grades_published, grading_type, submissionsLoaded}) {
     return [
       {
         // assignment
         points_possible,
-        grading_type
+        grading_type,
+        grades_published
       },
       [], // students
       {
@@ -48,6 +50,7 @@ test(
   function() {
     const props = this.props({
       points_possible: 10,
+      grades_published: true,
       grading_type: 'points',
       submissionsLoaded: true
     })
@@ -55,9 +58,20 @@ test(
   }
 )
 
+test('is disabled when grades are not published', function() {
+  const props = this.props({
+    points_possible: 10,
+    grades_published: false,
+    grading_type: 'points',
+    submissionsLoaded: true
+  })
+  ok(createCurveGradesAction(...props).isDisabled)
+})
+
 test('is disabled when submissions are not loaded', function() {
   const props = this.props({
     points_possible: 10,
+    grades_published: true,
     grading_type: 'points',
     submissionsLoaded: false
   })
@@ -67,6 +81,7 @@ test('is disabled when submissions are not loaded', function() {
 test('is disabled when grading type is pass/fail', function() {
   const props = this.props({
     points_possible: 10,
+    grades_published: true,
     grading_type: 'pass_fail',
     submissionsLoaded: true
   })
@@ -76,6 +91,7 @@ test('is disabled when grading type is pass/fail', function() {
 test('returns true when points_possible is null', function() {
   const props = this.props({
     points_possible: null,
+    grades_published: true,
     grading_type: 'points',
     submissionsLoaded: true
   })
@@ -83,17 +99,25 @@ test('returns true when points_possible is null', function() {
 })
 
 test('returns true when points_possible is 0', function() {
-  const props = this.props({points_possible: 0, grading_type: 'points', submissionsLoaded: true})
+  const props = this.props({
+    points_possible: 0,
+    grades_published: true,
+    grading_type: 'points',
+    submissionsLoaded: true
+  })
   ok(createCurveGradesAction(...props).isDisabled)
 })
 
 QUnit.module('CurveGradesDialogManager.createCurveGradesAction.onSelect', {
   setup() {
     this.flashErrorSpy = sandbox.spy($, 'flashError')
+    sandbox
+      .stub(AsyncComponents, 'loadCurveGradesDialog')
+      .returns(Promise.resolve(CurveGradesDialog))
     sandbox.stub(CurveGradesDialog.prototype, 'show')
   },
-  onSelect({isAdmin = false, inClosedGradingPeriod = false} = {}) {
-    createCurveGradesAction(
+  async onSelect({isAdmin = false, inClosedGradingPeriod = false} = {}) {
+    await createCurveGradesAction(
       {inClosedGradingPeriod},
       [],
       isAdmin,
@@ -117,9 +141,9 @@ QUnit.module('CurveGradesDialogManager.createCurveGradesAction.onSelect', {
   }
 })
 
-test('calls flashError if is not admin and in a closed grading period', function() {
+test('calls flashError if is not admin and in a closed grading period', async function() {
   const props = this.props({isAdmin: false, inClosedGradingPeriod: true})
-  createCurveGradesAction(...props).onSelect()
+  await createCurveGradesAction(...props).onSelect()
   ok(
     this.flashErrorSpy.withArgs(
       I18n.t(
@@ -130,44 +154,44 @@ test('calls flashError if is not admin and in a closed grading period', function
   )
 })
 
-test('does not call curve grades dialog if is not admin and in a closed grading period', function() {
+test('does not call curve grades dialog if is not admin and in a closed grading period', async function() {
   const props = this.props({isAdmin: false, inClosedGradingPeriod: true})
-  createCurveGradesAction(...props).onSelect()
+  await createCurveGradesAction(...props).onSelect()
   strictEqual(CurveGradesDialog.prototype.show.callCount, 0)
 })
 
-test('does not call flashError if is admin and in a closed grading period', function() {
+test('does not call flashError if is admin and in a closed grading period', async function() {
   const props = this.props({isAdmin: true, inClosedGradingPeriod: true})
-  createCurveGradesAction(...props).onSelect()
+  await createCurveGradesAction(...props).onSelect()
   ok(this.flashErrorSpy.notCalled)
 })
 
-test('calls curve grades dialog if is admin and in a closed grading period', function() {
+test('calls curve grades dialog if is admin and in a closed grading period', async function() {
   const props = this.props({isAdmin: true, inClosedGradingPeriod: true})
-  createCurveGradesAction(...props).onSelect()
+  await createCurveGradesAction(...props).onSelect()
   strictEqual(CurveGradesDialog.prototype.show.callCount, 1)
 })
 
-test('does not call flashError if is not admin and not in a closed grading period', function() {
+test('does not call flashError if is not admin and not in a closed grading period', async function() {
   const props = this.props({isAdmin: false, inClosedGradingPeriod: false})
-  createCurveGradesAction(...props).onSelect()
+  await createCurveGradesAction(...props).onSelect()
   ok(this.flashErrorSpy.notCalled)
 })
 
-test('calls curve grades dialog if is not admin and not in a closed grading period', function() {
+test('calls curve grades dialog if is not admin and not in a closed grading period', async function() {
   const props = this.props({isAdmin: false, inClosedGradingPeriod: false})
-  createCurveGradesAction(...props).onSelect()
+  await createCurveGradesAction(...props).onSelect()
   strictEqual(CurveGradesDialog.prototype.show.callCount, 1)
 })
 
-test('does not call flashError if is admin and not in a closed grading period', function() {
+test('does not call flashError if is admin and not in a closed grading period', async function() {
   const props = this.props({isAdmin: true, inClosedGradingPeriod: false})
-  createCurveGradesAction(...props).onSelect()
+  await createCurveGradesAction(...props).onSelect()
   ok(this.flashErrorSpy.notCalled)
 })
 
-test('calls curve grades dialog if is admin and not in a closed grading period', function() {
+test('calls curve grades dialog if is admin and not in a closed grading period', async function() {
   const props = this.props({isAdmin: true, inClosedGradingPeriod: false})
-  createCurveGradesAction(...props).onSelect()
+  await createCurveGradesAction(...props).onSelect()
   strictEqual(CurveGradesDialog.prototype.show.callCount, 1)
 })

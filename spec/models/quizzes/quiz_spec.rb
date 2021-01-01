@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -32,6 +34,7 @@ describe Quizzes::Quiz do
     let(:default_false_values) do
       Quizzes::Quiz.where(id: @quiz).pluck(
         :shuffle_answers,
+        :disable_timer_autosubmission,
         :could_be_locked,
         :anonymous_submissions,
         :require_lockdown_browser,
@@ -48,6 +51,7 @@ describe Quizzes::Quiz do
     it "saves boolean attributes as false if they are set to nil" do
       @quiz.update!(
         shuffle_answers: nil,
+        disable_timer_autosubmission: nil,
         could_be_locked: nil,
         anonymous_submissions: nil,
         require_lockdown_browser: nil,
@@ -71,6 +75,7 @@ describe Quizzes::Quiz do
     it "saves boolean attributes as false if they are set to false" do
       @quiz.update!(
         shuffle_answers: false,
+        disable_timer_autosubmission: false,
         could_be_locked: false,
         anonymous_submissions: false,
         require_lockdown_browser: false,
@@ -95,6 +100,7 @@ describe Quizzes::Quiz do
       allow(Quizzes::Quiz).to receive(:lockdown_browser_plugin_enabled?).and_return(true)
       @quiz.update!(
         shuffle_answers: true,
+        disable_timer_autosubmission: true,
         could_be_locked: true,
         anonymous_submissions: true,
         require_lockdown_browser: true,
@@ -1103,6 +1109,37 @@ describe Quizzes::Quiz do
     end
   end
 
+  describe "timer_autosubmit_disabled?" do
+    let(:account) { Account.default }
+    let(:course){ Course.create!(root_account: account) }
+
+    before do
+      @quiz = course.quizzes.create!
+    end
+
+    it "returns false when feature flag is off" do
+      @course.root_account.set_feature_flag! 'timer_without_autosubmission', 'off'
+      expect(@quiz.timer_autosubmit_disabled?).to be(false)
+      @quiz.update({
+        disable_timer_autosubmission: true
+      })
+      expect(@quiz.timer_autosubmit_disabled?).to be(false)
+    end
+
+    it "returns false when feature flag is on and disable_timer_autosubmission is false" do
+      @course.root_account.set_feature_flag! 'timer_without_autosubmission', 'on'
+      expect(@quiz.timer_autosubmit_disabled?).to be(false)
+    end
+
+    it "returns true when feature flag is on and disable_timer_autosubmission is true" do
+      @course.root_account.set_feature_flag! 'timer_without_autosubmission', 'on'
+      @quiz.update({
+        disable_timer_autosubmission: true
+      })
+      expect(@quiz.timer_autosubmit_disabled?).to be(true)
+    end
+  end
+
   describe '#has_student_submissions?' do
     before :once do
       course = Course.create!
@@ -1507,18 +1544,14 @@ describe Quizzes::Quiz do
         quiz_question_id: q.id,
         regrade_option: 'current_correct_only'
       )
-      expect(Quizzes::QuizRegrader::Regrader).to receive(:send_later_enqueue_args).once.
-        with(
-          :regrade!,
-          { strand: "quiz:#{quiz.global_id}:regrading"},
-          quiz: quiz, version_number: quiz.version_number
-        )
+      expect(Quizzes::QuizRegrader::Regrader).to receive(:delay).with(strand: "quiz:#{quiz.global_id}:regrading").once.and_return(Quizzes::QuizRegrader::Regrader)
+      expect(Quizzes::QuizRegrader::Regrader).to receive(:regrade!).with(quiz: quiz, version_number: quiz.version_number)
       quiz.save!
     end
 
     it "does not queue a job to regrade when no current question regrades" do
       course_with_teacher(course: @course, active_all: true)
-      expect(Quizzes::QuizRegrader::Regrader).to receive(:send_later_enqueue_args).never
+      expect(Quizzes::QuizRegrader::Regrader).to receive(:delay).never
       quiz = @course.quizzes.create!
       quiz.save!
     end
@@ -2514,6 +2547,28 @@ describe Quizzes::Quiz do
     it 'returns the value of anonymous_submissions' do
       quiz = @course.quizzes.create!(title: "hello", anonymous_submissions: true)
       expect(quiz.anonymous_grading?).to be true
+    end
+  end
+
+  describe 'before save' do
+    describe 'set_root_account_id' do
+      it 'sets root_account_id using context' do
+        quiz = @course.quizzes.create!(title: 'hello')
+        expect(quiz.root_account).to eq @course.root_account
+      end
+
+      it 'leaves root_account_id nil if no context' do
+        @course.root_account_id = nil
+        quiz = @course.quizzes.create!(title: 'hello')
+        expect(quiz.root_account).to be_nil
+      end
+    end
+  end
+
+  context 'root_account_id' do
+    it "uses root_account value from account" do
+      quiz = @course.quizzes.create!(title: "hello")
+      expect(quiz.root_account_id).to eq Account.default.id
     end
   end
 end

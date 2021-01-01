@@ -17,6 +17,10 @@
 #
 
 class Login::Oauth2Controller < Login::OauthBaseController
+  skip_before_action :verify_authenticity_token
+
+  rescue_from Canvas::Security::TokenExpired, with: :handle_expired_token
+
   def new
     super
     nonce = session[:oauth2_nonce] = SecureRandom.hex(24)
@@ -29,7 +33,7 @@ class Login::Oauth2Controller < Login::OauthBaseController
       @aac.debug_set(:authorize_url, authorize_url)
     end
 
-    redirect_to delegated_auth_redirect_uri(authorize_url)
+    redirect_to authorize_url
   end
 
   def create
@@ -47,7 +51,7 @@ class Login::Oauth2Controller < Login::OauthBaseController
     provider_attributes = {}
     return unless timeout_protection do
       begin
-        token = @aac.get_token(params[:code], oauth2_login_callback_url)
+        token = @aac.get_token(params[:code], oauth2_login_callback_url, params)
       rescue => e
         @aac.debug_set(:get_token_response, e) if debugging
         raise
@@ -70,6 +74,11 @@ class Login::Oauth2Controller < Login::OauthBaseController
 
   protected
 
+  def handle_expired_token
+    flash[:delegated_message] = t("It took too long to login. Please try again")
+    redirect_to login_url
+  end
+
   def validate_request
     if params[:error_description]
       flash[:delegated_message] = Sanitize.clean(params[:error_description])
@@ -82,8 +91,7 @@ class Login::Oauth2Controller < Login::OauthBaseController
         raise ActionController::InvalidAuthenticityToken
       end
     rescue Canvas::Security::TokenExpired
-      flash[:delegated_message] = t("It took too long to login. Please try again")
-      redirect_to login_url
+      handle_expired_token
       return false
     end
 

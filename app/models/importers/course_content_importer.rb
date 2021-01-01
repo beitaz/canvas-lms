@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2014 - present Instructure, Inc.
 #
@@ -210,6 +212,13 @@ module Importers
         migration.workflow_state = :imported unless post_processing?(migration)
         migration.save
 
+        if migration.for_master_course_import? && migration.migration_settings[:publish_after_completion]
+          if course.unpublished?
+            # i could just do it directly but this way preserves the audit trail
+            course.update_one({:event => 'offer'}, migration.user, :blueprint_sync)
+          end
+        end
+
         if course.changed?
           course.save!
         else
@@ -217,7 +226,6 @@ module Importers
         end
 
         clear_assignment_and_quiz_caches(migration)
-        DueDateCacher.recompute_course(course, update_grades: true, executing_user: migration.user)
       end
 
       migration.trigger_live_events!
@@ -234,22 +242,12 @@ module Importers
       mod = course.context_modules.find_by_id(module_id)
       return unless mod
 
-      import_type = migration.migration_settings[:insert_into_module_type]
-      imported_items = if import_type.present?
-        migration.imported_migration_items_hash[import_class_name(import_type)].values
-      else
-        migration.imported_migration_items
-      end
+      imported_items = migration.imported_migration_items_for_insert_type
       return unless imported_items.any?
 
       start_pos = migration.migration_settings[:insert_into_module_position]
       start_pos = start_pos.to_i unless start_pos.nil? # 0 = start; nil = end
       mod.insert_items(imported_items, start_pos)
-    end
-
-    def self.import_class_name(import_type)
-      prefix = ContentMigration.asset_string_prefix(ContentMigration.collection_name(import_type.pluralize))
-      ActiveRecord::Base.convert_class_name(prefix)
     end
 
     def self.move_to_assignment_group(course, migration)
@@ -285,6 +283,7 @@ module Importers
               event.lock_at = shift_date(event.lock_at, shift_options)
               event.unlock_at = shift_date(event.unlock_at, shift_options)
               event.peer_reviews_due_at = shift_date(event.peer_reviews_due_at, shift_options)
+              event.needs_update_cached_due_dates = true if event.update_cached_due_dates?
               event.save_without_broadcasting
               if event.errors.any?
                 migration.add_warning(t("Couldn't adjust dates on assignment %{name} (ID %{id})", name: event.name, id: event.id.to_s))
@@ -373,8 +372,11 @@ module Importers
     end
 
     def self.clear_assignment_and_quiz_caches(migration)
-      assignments = migration.imported_migration_items_by_class(Assignment).select(&:update_cached_due_dates?)
-      Assignment.clear_cache_keys(assignments, :availability) if assignments.any?
+      assignments = migration.imported_migration_items_by_class(Assignment).select(&:needs_update_cached_due_dates)
+      if assignments.any?
+        Assignment.clear_cache_keys(assignments, :availability)
+        DueDateCacher.recompute_course(migration.context, assignments: assignments, update_grades: true, executing_user: migration.user)
+      end
       quizzes = migration.imported_migration_items_by_class(Quizzes::Quiz).select(&:should_clear_availability_cache)
       Quizzes::Quiz.clear_cache_keys(quizzes, :availability) if quizzes.any?
     end

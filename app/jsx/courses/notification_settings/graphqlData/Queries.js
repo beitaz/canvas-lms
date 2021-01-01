@@ -17,11 +17,43 @@
  */
 import gql from 'graphql-tag'
 
-export const COURSE_NOTIFICATIONS_ENABLED_QUERY = gql`
-  query GetNotificationPreferences($courseId: ID!) {
-    course(id: $courseId) {
-      _id
-      notificationPreferencesEnabled
+export const COURSE_NOTIFICATIONS_QUERY = gql`
+  query GetNotificationPreferences($courseId: ID!, $userId: ID!) {
+    legacyNode(_id: $userId, type: User) {
+      ... on User {
+        _id
+        notificationPreferencesEnabled(contextType: Course, courseId: $courseId)
+        notificationPreferences {
+          sendScoresInEmails(courseId: $courseId)
+          channels {
+            _id
+            path
+            pathType
+            notificationPolicies(contextType: Course) {
+              communicationChannelId
+              frequency
+              notification {
+                _id
+                category
+                categoryDescription
+                categoryDisplayName
+                name
+              }
+            }
+            notificationPolicyOverrides(contextType: Course, courseId: $courseId) {
+              communicationChannelId
+              frequency
+              notification {
+                _id
+                category
+                categoryDescription
+                categoryDisplayName
+                name
+              }
+            }
+          }
+        }
+      }
     }
   }
 `

@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 
 # Copyright (C) 2019 - present Instructure, Inc.
 
@@ -27,7 +28,7 @@ describe "analytics in Canvas" do
   include Factories
 
   context "Analytics 2.0 LTI installed" do
-    before :once do 
+    before :once do
       @admin = account_admin_user(:active_all => true)
       # Analytics1.0 is enabled for all tests by default
       @admin.account.update(allowed_services: "+analytics")
@@ -36,74 +37,79 @@ describe "analytics in Canvas" do
       @tool_id = @admin.account.context_external_tools.first.id
       # create a course, @teacher and student in course
       @course = course_with_teacher(
-        :account => @admin.account, 
-        :course_name => "A New Course", 
-        name: 'Teacher1', 
+        :account => @admin.account,
+        :course_name => "A New Course",
+        name: 'Teacher1',
         :active_all => true
       ).course
       @student = student_in_course(
-        :course => @course, 
-        :name => "First Student", 
+        :course => @course,
+        :name => "First Student",
         :active_all => true
       ).user
       @admin.account.enable_feature!(:student_context_cards)
     end
 
     describe "student context tray for teacher role" do
-      context "with A2 FF enabled" do 
+      context "with A2 FF enabled" do
         before :each do
           @course.root_account.enable_feature!(:analytics_2)
           user_session(@teacher)
-         
+
           visit_course_people_page(@course.id)
           course_user_link(@student.id).click
           wait_for_student_tray
         end
 
         it "displays Analytics 2 button on Student Tray" do
+          skip "Flakey spec. Fix via LA-849"
           expect(student_tray_quick_links.text).to include('Analytics 2')
         end
       end
 
-      context "with A2 FF disabled" do 
+      context "with A2 FF disabled" do
         before :each do
           @course.root_account.disable_feature!(:analytics_2)
           user_session(@teacher)
-         
+
           visit_course_people_page(@course.id)
           course_user_link(@student.id).click
           wait_for_student_tray
         end
 
         it "displays Analytics 1 button on Student Tray" do
+          skip "Flakey spec. Fix via LA-849"
           expect(student_tray_quick_links.text).to include('Analytics')
           expect(student_tray_quick_links.text).not_to include('Analytics 2')
         end
       end
 
-      context "with permissions" do 
+      context "with permissions" do
         context "with A2 FF disabled and view_analytics permission disabled" do
           before :each do
             @course.account.role_overrides.create!(:permission => :view_analytics, :role => teacher_role, :enabled => false)
             @course.root_account.disable_feature!(:analytics_2)
             user_session(@teacher)
-          
+
             visit_course_people_page(@course.id)
             course_user_link(@student.id).click
             wait_for_student_tray
           end
 
           it "does not display Analytics 1 button" do
+            skip "Flakey spec. Fix via LA-849"
             expect(student_tray_quick_links.text).not_to include('Analytics')
           end
         end
 
         context "with A2 FF enabled and view_all_grades disabled" do
           before :each do
+            skip "Flakey spec. Fix via LA-849"
+
             @course.account.role_overrides.create!(:permission => :view_all_grades, :role => teacher_role, :enabled => false)
             @course.root_account.enable_feature!(:analytics_2)
             user_session(@teacher)
-          
+
             visit_course_people_page(@course.id)
             course_user_link(@student.id).click
             wait_for_student_tray

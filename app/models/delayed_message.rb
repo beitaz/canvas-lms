@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -18,7 +20,8 @@
 
 class DelayedMessage < ActiveRecord::Base
   include NotificationPreloader
-  belongs_to :notification_policy
+  belongs_to :notification_policy, inverse_of: :delayed_messages
+  belongs_to :notification_policy_override, inverse_of: :delayed_messages
   belongs_to :context, polymorphic:
     [
       :discussion_entry, :assignment, :submission_comment, :submission,

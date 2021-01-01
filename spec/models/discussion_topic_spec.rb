@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -504,6 +506,7 @@ describe DiscussionTopic do
           section2 = @course.course_sections.create!
           student1 = create_enrolled_user(@course, section1, :name => 'student 1', :enrollment_type => 'StudentEnrollment')
           student2 = create_enrolled_user(@course, section2, :name => 'student 2', :enrollment_type => 'StudentEnrollment')
+          @course.reload
           add_section_to_topic(topic, section2)
           topic.save!
           topic.publish!
@@ -1079,6 +1082,23 @@ describe DiscussionTopic do
       end
     end
 
+    it "should not send stream items to students if locked by a module" do
+      topic = @course.discussion_topics.create!(
+        title: "Ya Ya Ding Dong",
+        user: @teacher,
+        message: 'By Will Ferrell and My Marianne',
+        workflow_state: "unpublished"
+      )
+
+      context_module = @course.context_modules.create!(name: 'some module')
+      context_module.unlock_at = Time.now + 1.day
+      context_module.add_item(type: 'discussion_topic', id: topic.id)
+      context_module.save!
+      topic.publish!
+
+      expect(@student.stream_item_instances.count).to eq 0
+    end
+
     it "should not send stream items to students if course isn't published'" do
       @course.update_attribute(:workflow_state, "created")
       topic = @course.discussion_topics.create!(:title => "secret topic", :user => @teacher)
@@ -1126,6 +1146,26 @@ describe DiscussionTopic do
       announcement.save!
 
       expect(@student.stream_item_instances.count).to eq 0
+    end
+
+    it "should remove stream items from users if locked by a module" do
+      topic = @course.discussion_topics.create!(title: "Ya Ya Ding Dong", user: @teacher, message: 'By Will Ferrell and My Marianne')
+
+      expect(@student.stream_item_instances.count).to eq 1
+
+      context_module = @course.context_modules.create!(name: 'some module')
+      context_module.unlock_at = Time.now + 1.day
+      context_module.add_item(type: 'discussion_topic', id: topic.id)
+      context_module.save!
+      topic.save!
+
+      expect(@student.stream_item_instances.count).to eq 0
+    end
+
+    it "should not attempt to clear stream items if a discussion topic was not secton specific before last save" do
+      topic = @course.discussion_topics.create!(title: "Ben Loves Panda", user: @teacher)
+      expect(topic.stream_item).to receive(:stream_item_instances).never
+      topic.update!(title: "Lemon Loves Panda")
     end
 
     it "should not send stream items to students if the topic isn't published" do
@@ -1497,7 +1537,7 @@ describe DiscussionTopic do
 
       entry_time = 1.minute.ago
       DiscussionEntry.where(:id => entry.id).update_all(:created_at => entry_time)
-      @assignment = assignment_model(:course => @course, :lock_at => 1.day.ago)
+      @assignment = assignment_model(:course => @course, :lock_at => 1.day.ago, :due_at => 2.days.ago)
       @topic.assignment = @assignment
       @topic.save
       @student.reload
@@ -1528,7 +1568,7 @@ describe DiscussionTopic do
       @student.reload
       expect(@student.submissions).to be_empty
 
-      @assignment = assignment_model(:course => @course, :lock_at => 1.day.ago)
+      @assignment = assignment_model(:course => @course, :lock_at => 1.day.ago, :due_at => 2.days.ago)
       @topic.assignment = @assignment
       @topic.save
       @student.reload
@@ -1549,7 +1589,7 @@ describe DiscussionTopic do
 
       entry_time = 1.minute.ago
       DiscussionEntry.where(:id => entry.id).update_all(:created_at => entry_time)
-      @assignment = assignment_model(:course => @course, :lock_at => 1.day.ago)
+      @assignment = assignment_model(:course => @course, :lock_at => 1.day.ago, :due_at => 2.days.ago)
       @topic.assignment = @assignment
       @topic.save
       @student.reload
@@ -2335,33 +2375,45 @@ describe DiscussionTopic do
     end
   end
 
-  describe "locked by context module" do
+  describe 'context modules' do
     before(:once) do
       discussion_topic_model(context: @course)
       @module = @course.context_modules.create!(name: 'some module')
-      @module.add_item(type: 'discussion_topic', id: @topic.id)
-      @module.unlock_at = 2.months.from_now
+      @tag = @module.add_item(type: 'discussion_topic', id: @topic.id)
       @module.save!
       @topic.reload
     end
-
-    it "stays visible_for? student even when locked by module" do
-      expect(@topic.visible_for?(@student)).to be_truthy
+    it 'should clear stream items when unpublishing a module' do
+      expect { @module.unpublish! }.to change { @student.stream_item_instances.count }.by(-1)
     end
-
-    it "is locked_for? students when locked by module" do
-      expect(@topic.locked_for?(@student, deep_check_if_needed: true)).to be_truthy
+    it 'should remove stream items when the module item is changed to unpublished' do
+      expect { @tag.unpublish! }.to change { @student.stream_item_instances.count }.by(-1)
     end
-
-    describe "reject_context_module_locked_topics" do
-      it "filters module locked topics for students" do
-        topics = DiscussionTopic.reject_context_module_locked_topics([@topic], @student)
-        expect(topics).to be_empty
+    it 'should clear stream items when added to unpublished module items' do
+      expect {
+        @module.content_tags.create!(workflow_state: 'unpublished', content: @topic, context: @course)
+      }.to change { @student.stream_item_instances.count }.by(-1)
+    end
+    describe 'unpublished context module' do
+      before(:once) do
+        @module.unpublish!
+        @tag.unpublish!
       end
-
-      it "does not filter module locked topics for teachers" do
-        topics = DiscussionTopic.reject_context_module_locked_topics([@topic], @teacher)
-        expect(topics).not_to be_empty
+      it 'should not create stream items for unpublished modules' do
+        @topic.unpublish!
+        expect { @topic.publish! }.to change { @student.stream_item_instances.count }.by 0
+      end
+      it 'should remove stream items from published topic when added to an unpublished module' do
+        topic = discussion_topic_model(context: @course)
+        expect { @module.add_item(type: 'discussion_topic', id: topic.id) }.to change { @student.stream_item_instances.count }.by(-1)
+      end
+      it 'should  create stream items when module is published' do
+        @tag.publish!
+        expect { @module.publish! }.to change { @student.stream_item_instances.count }.by 1
+      end
+      it 'should  create stream items when module item is published' do
+        @module.publish!
+        expect { @tag.publish! }.to change { @student.stream_item_instances.count }.by 1
       end
     end
   end
@@ -2587,6 +2639,21 @@ describe DiscussionTopic do
       topic.save!
       users = topic.users_with_permissions(@all_users)
       expect(users.map(&:id).to_set).to eq([@teacher.id, @student2.id].to_set)
+    end
+  end
+
+  context "only_graders_can_rate" do
+    it "should check permissions on the course level for group level discussions" do
+      group = @course.groups.create!
+      topic = group.discussion_topics.create!(:allow_rating => true, :only_graders_can_rate => true)
+      expect(topic.grants_right?(@teacher, :rate)).to eq true
+    end
+  end
+
+  describe 'create' do
+    it 'sets the root_account_id using context' do
+      discussion_topic_model(context: @course)
+      expect(@topic.root_account_id).to eq @course.root_account_id
     end
   end
 end

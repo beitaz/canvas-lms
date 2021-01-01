@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2019 - present Instructure, Inc.
 #
@@ -86,8 +88,8 @@ describe SubmissionDraftAttachment do
     specs_require_sharding
 
     before(:once) do
-      @shard1.activate { @attachment1 = attachment_model }
-      @shard2.activate { @attachment2 = attachment_model }
+      @shard1.activate { @attachment1 = attachment_model(:context => course_factory(:account => Account.create!)) }
+      @shard2.activate { @attachment2 = attachment_model(:context => course_factory(:account => Account.create!)) }
       @shard1.activate do
         @submission_draft.attachments = [@attachment1, @attachment2]
         @submission_draft.save!

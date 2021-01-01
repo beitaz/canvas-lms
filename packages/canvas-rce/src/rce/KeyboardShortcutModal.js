@@ -18,10 +18,12 @@
 
 import React from 'react'
 import {bool, func} from 'prop-types'
-import {Heading, List, Text} from '@instructure/ui-elements'
-import {Modal} from '@instructure/ui-overlays'
+import {Heading} from '@instructure/ui-heading'
+import {List} from '@instructure/ui-list'
+import {Text} from '@instructure/ui-text'
+import {Modal} from '@instructure/ui-modal'
 import {CloseButton} from '@instructure/ui-buttons'
-import {View} from '@instructure/ui-layout'
+import {View} from '@instructure/ui-view'
 import formatMessage from '../format-message'
 
 export default function KeyboardShortcutModal(props) {
@@ -51,7 +53,7 @@ export default function KeyboardShortcutModal(props) {
               {formatMessage('Open this keyboard shortcuts dialog')}
             </List.Item>
             <List.Item>
-              <Text weight="bold">CTRL+F9</Text> {formatMessage('Focus the popup context toolbar')}
+              <Text weight="bold">CTRL+F9</Text> {formatMessage('Focus element options toolbar')}
             </List.Item>
             <List.Item>
               <Text weight="bold">ALT+F9</Text> {formatMessage("Go to the editor's menubar")}

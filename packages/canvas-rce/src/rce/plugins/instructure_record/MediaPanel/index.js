@@ -18,11 +18,11 @@
 
 import React, {useRef} from 'react'
 import {arrayOf, bool, func, objectOf, oneOf, shape, string} from 'prop-types'
-import {fileShape} from '../../shared/fileShape'
+import {mediaObjectShape} from '../../shared/fileShape'
 import formatMessage from '../../../../format-message'
 
-import {Text} from '@instructure/ui-elements'
-import {View} from '@instructure/ui-layout'
+import {Text} from '@instructure/ui-text'
+import {View} from '@instructure/ui-view'
 import Link from '../../instructure_documents/components/Link'
 import {
   LoadMoreButton,
@@ -58,7 +58,7 @@ function renderLoadingError(_error) {
 }
 
 export default function MediaPanel(props) {
-  const {fetchInitialMedia, fetchNextMedia, contextType, sortBy} = props
+  const {fetchInitialMedia, fetchNextMedia, contextType, sortBy, searchString} = props
   const media = props.media[contextType]
   const {hasMore, isLoading, error, files} = media
   const lastItemRef = useRef(null)
@@ -71,7 +71,8 @@ export default function MediaPanel(props) {
     onLoadMore: fetchNextMedia,
     records: files,
     contextType,
-    sortBy
+    sortBy,
+    searchString
   })
 
   const handleFileClick = file => {
@@ -106,7 +107,7 @@ MediaPanel.propTypes = {
   onMediaEmbed: func.isRequired,
   media: objectOf(
     shape({
-      files: arrayOf(shape(fileShape)).isRequired,
+      files: arrayOf(shape(mediaObjectShape)).isRequired,
       bookmark: string,
       hasMore: bool,
       isLoading: bool,
@@ -116,5 +117,6 @@ MediaPanel.propTypes = {
   sortBy: shape({
     sort: oneOf(['date_added', 'alphabetical']).isRequired,
     order: oneOf(['asc', 'desc']).isRequired
-  })
+  }),
+  searchString: string
 }

@@ -23,6 +23,7 @@
 <% provide :right_side do %>
   <div id="course_show_secondary">
     <% @can_manage = can_do(@context, @current_user, :manage) %>
+    <% @module_dnd_FF = @domain_root_account.feature_enabled?(:module_dnd) %>
     <% @can_create_announcements = @context.announcements.temp_record.grants_right?(@current_user, session, :create) %>
     <% if can_do(@context, @current_user, :change_course_state) && (@context.unpublished? || @context.unpublishable?) %>
       <div id="course_status">
@@ -51,6 +52,13 @@
           <% end %>
         </div>
       </div>
+    <% end %>
+
+    <% if @module_dnd_FF && can_do(@context, @current_user, :manage_content) %>
+      <a class="btn button-sidebar-wide" href="<%= context_url(@context, :context_content_migrations_url) %>">
+        <i class="icon-import"></i>
+        <%= t('links.import', %{Import Existing Content}) %>
+      </a>
     <% end %>
 
     <% if @can_manage || @can_create_announcements || @course_home_view != 'feed' || @course_home_sub_navigation_tools.present? %>
@@ -124,7 +132,7 @@
           </a>
         <% end %>
 
-        <% if can_do(@context, @current_user, :use_student_view) %>
+        <% if can_do(@context, @current_user, :use_student_view) && !@context.feature_enabled?(:easy_student_view) %>
           <%= link_to course_student_view_path(@context), :method => :post, :class => 'btn button-sidebar-wide' do %>
             <i class="icon-student-view"></i> <%= t('links.student_view', 'Student View') %>
           <% end %>
@@ -163,7 +171,7 @@
       </a>
     <% end %>
 
-    <% if @context_enrollment && @domain_root_account.try(:feature_enabled?, :mute_notifications_by_course) %>
+    <% if @context_enrollment %>
       <a class="btn button-sidebar-wide" href="<%= context_url(@context, :context_url, :view => 'notifications') %>">
         <i class="icon-<%= @course_notifications_enabled ? "unmuted" : "muted" %>"></i>
         <%= t('links.view_course_notification_settings', %{View Course Notifications}) %>

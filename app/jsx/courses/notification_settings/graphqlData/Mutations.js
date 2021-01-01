@@ -18,13 +18,47 @@
 import gql from 'graphql-tag'
 
 export const UPDATE_COURSE_NOTIFICATION_PREFERENCES = gql`
-  mutation UpdateCourseNotificationPreferences($courseId: ID!, $enabled: Boolean!) {
+  mutation UpdateCourseNotificationPreferences(
+    $courseId: ID!
+    $enabled: Boolean
+    $channelId: ID
+    $category: NotificationCategoryType
+    $frequency: NotificationFrequencyType
+    $sendScoresInEmails: Boolean
+  ) {
     updateNotificationPreferences(
-      input: {contextType: Course, courseId: $courseId, enabled: $enabled}
+      input: {
+        contextType: Course
+        courseId: $courseId
+        enabled: $enabled
+        communicationChannelId: $channelId
+        notificationCategory: $category
+        frequency: $frequency
+        sendScoresInEmails: $sendScoresInEmails
+        isPolicyOverride: true
+      }
     ) {
-      course {
+      user {
         _id
-        notificationPreferencesEnabled
+        notificationPreferencesEnabled(contextType: Course, courseId: $courseId)
+        notificationPreferences {
+          sendScoresInEmails(courseId: $courseId)
+          channels(channelId: $channelId) {
+            _id
+            path
+            pathType
+            notificationPolicyOverrides(contextType: Course, courseId: $courseId) {
+              communicationChannelId
+              frequency
+              notification {
+                _id
+                category
+                categoryDisplayName
+                name
+              }
+            }
+          }
+        }
       }
       errors {
         message

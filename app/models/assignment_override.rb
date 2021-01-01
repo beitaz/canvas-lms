@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -28,10 +30,10 @@ class AssignmentOverride < ActiveRecord::Base
 
   attr_accessor :dont_touch_assignment, :preloaded_student_ids, :changed_student_ids
 
-  belongs_to :assignment
-  belongs_to :quiz, class_name: 'Quizzes::Quiz'
+  belongs_to :assignment, inverse_of: :assignment_overrides
+  belongs_to :quiz, class_name: 'Quizzes::Quiz', inverse_of: :assignment_overrides
   belongs_to :set, polymorphic: [:group, :course_section], exhaustive: false
-  has_many :assignment_override_students, -> { where(workflow_state: 'active') }, :dependent => :destroy, :validate => false
+  has_many :assignment_override_students, -> { where(workflow_state: 'active') }, :inverse_of => :assignment_override, :dependent => :destroy, :validate => false
   validates_presence_of :assignment_version, :if => :assignment
   validates_presence_of :title, :workflow_state
   validates :set_type, inclusion: ['CourseSection', 'Group', 'ADHOC', SET_TYPE_NOOP]
@@ -43,6 +45,8 @@ class AssignmentOverride < ActiveRecord::Base
     :if => lambda{ |override| override.assignment? && override.active? && concrete_set.call(override) }
   validates_uniqueness_of :set_id, :scope => [:quiz_id, :set_type, :workflow_state],
     :if => lambda{ |override| override.quiz? && override.active? && concrete_set.call(override) }
+
+  before_create :set_root_account_id
 
   validate :if => concrete_set do |record|
     if record.set && record.assignment && record.active?
@@ -80,6 +84,7 @@ class AssignmentOverride < ActiveRecord::Base
 
   after_save :touch_assignment, :if => :assignment
   after_save :update_grading_period_grades
+  after_save :update_due_date_smart_alerts, if: :update_cached_due_dates?
   after_commit :update_cached_due_dates
 
   def set_not_empty?
@@ -144,6 +149,20 @@ class AssignmentOverride < ActiveRecord::Base
     end
   end
 
+  def update_due_date_smart_alerts
+    if self.due_at.nil? || self.due_at < Time.zone.now
+      ScheduledSmartAlert.find_by(context_type: self.class.name, context_id: self.id, alert_type: :due_date_reminder)&.destroy
+    else
+      ScheduledSmartAlert.upsert(
+        context_type: self.class.name,
+        context_id: self.id,
+        alert_type: :due_date_reminder,
+        due_at: self.due_at,
+        root_account_id: root_account_id
+      )
+    end
+  end
+
   def touch_assignment
     return true if assignment.nil? || dont_touch_assignment
     assignment.touch
@@ -167,6 +186,8 @@ class AssignmentOverride < ActiveRecord::Base
       self.default_values
       self.save!(validate: false)
     end
+
+    ScheduledSmartAlert.where(context_type: self.class.name, context_id: self.id).destroy_all
   end
 
   scope :active, -> { where(:workflow_state => 'active') }
@@ -277,6 +298,7 @@ class AssignmentOverride < ActiveRecord::Base
   end
 
   def due_at=(new_due_at)
+    new_due_at = self.class.type_for_attribute(:due_at).cast(new_due_at) if new_due_at.is_a?(String)
     new_due_at = CanvasTime.fancy_midnight(new_due_at)
     new_all_day, new_all_day_date = Assignment.all_day_interpretation(
       :due_at => new_due_at,
@@ -290,6 +312,7 @@ class AssignmentOverride < ActiveRecord::Base
   end
 
   def lock_at=(new_lock_at)
+    new_lock_at = self.class.type_for_attribute(:lock_at).cast(new_lock_at) if new_lock_at.is_a?(String)
     write_attribute(:lock_at, CanvasTime.fancy_midnight(new_lock_at))
   end
 
@@ -391,5 +414,14 @@ class AssignmentOverride < ActiveRecord::Base
     p.to { applies_to_admins }
     p.whenever { |record| record.notify_change? }
     p.data { course_broadcast_data }
+  end
+
+  def root_account_id
+    # Use the attribute if availible, otherwise fall back to getting it from a parent entity
+    super || assignment&.root_account_id || quiz&.root_account_id || quiz&.assignment&.root_account_id
+  end
+
+  def set_root_account_id
+    self.write_attribute(:root_account_id, root_account_id) unless read_attribute(:root_account_id)
   end
 end

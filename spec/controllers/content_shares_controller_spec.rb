@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2019 - present Instructure, Inc.
 #
@@ -157,6 +159,13 @@ describe ContentSharesController do
         expect(json[1]['content_export']).to be_present
       end
 
+      it "includes sender information" do
+        user_session @teacher_2
+        get :index, params: { user_id: @teacher_2.id, list: 'received', per_page: 1 }
+        json = JSON.parse(response.body.sub(/^while\(1\);/, ''))
+        expect(json.map { |share| share['sender']['id'] }).to eq([@teacher_1.id])
+      end
+
       it "paginates received content shares" do
         Timecop.travel(1.hour.ago) do
           export2 = @course_1.content_exports.create!(settings: {"selected_content" => {"quizzes" => {'foo' => '1'}, "content_tags" => {'bar' => '1'}, "context_modules" => {'baz' => '1'}}})
@@ -263,11 +272,13 @@ describe ContentSharesController do
         expect(@sent_share.receivers.pluck(:id)).to match_array([@teacher_2.id, @teacher_3.id])
       end
 
-      it "disallows sharing with yourself" do
+      it "allows sharing with yourself, because why not" do
         user_session @teacher_1
         post :add_users, params: { user_id: @teacher_1.id, id: @sent_share.id, receiver_ids: [@teacher_1.id, @teacher_3.id] }
-        expect(response).to have_http_status(:bad_request)
-        expect(response.body).to include 'You cannot share with yourself'
+        expect(response).to be_successful
+        json = JSON.parse(response.body.sub(/^while\(1\);/, ''))
+        expect(json['receivers'].map { |r| r['id'] }).to match_array([@teacher_1.id, @teacher_2.id, @teacher_3.id])
+        expect(@sent_share.receivers.pluck(:id)).to match_array([@teacher_1.id, @teacher_2.id, @teacher_3.id])
       end
 
       it "complains if no valid users are included" do

@@ -46,12 +46,14 @@ module Lti
         end
         pagination_args = {max_per_page: 100}
         respond_to do |format|
-          launch_defs = Api.paginate(
-            collection,
-            self,
-            named_context_url(@context, :api_v1_context_launch_definitions_url, include_host: true),
-            pagination_args
-          )
+          launch_defs = GuardRail.activate(:secondary) do
+            Api.paginate(
+              collection,
+              self,
+              named_context_url(@context, :api_v1_context_launch_definitions_url, include_host: true),
+              pagination_args
+            )
+          end
           format.json do
             cancel_cache_buster
             expires_in 10.minutes
@@ -104,6 +106,7 @@ module Lti
     end
 
     def user_in_account?(user, account)
+      return false unless user.present?
       user.associated_accounts.include? account
     end
   end

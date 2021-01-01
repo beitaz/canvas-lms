@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -19,12 +21,6 @@
 begin
   require 'byebug'
 rescue LoadError
-end
-
-if ENV['KNAPSACK_ENABLED'] == '1'
-  puts "DEBUGGING FOR KNAPSACK: rspec run with args: #{ARGV}"
-  require 'knapsack'
-  Knapsack::Adapters::RSpecAdapter.bind
 end
 
 require 'securerandom'
@@ -154,6 +150,16 @@ module RSpec::Rails
       !!Nokogiri::HTML(actual).at_css(expected)
     end
   end
+
+  RSpec::Matchers.define :be_checked do
+    match do |node|
+      if node.is_a?(Nokogiri::XML::Element)
+        node.attr('checked') == 'checked'
+      elsif node.respond_to?(:checked?)
+        node.checked?
+      end
+    end
+  end
 end
 
 module RenderWithHelpers
@@ -212,17 +218,7 @@ require_relative 'rspec_mock_extensions'
 require File.expand_path(File.dirname(__FILE__) + '/ams_spec_helper')
 
 require 'i18n_tasks'
-
-legit_global_methods = Object.private_methods
-Dir[File.dirname(__FILE__) + "/factories/**/*.rb"].each {|f| require f }
-crap_factories = (Object.private_methods - legit_global_methods)
-if crap_factories.present?
-  $stderr.puts "\e[31mError: Don't create global factories/helpers"
-  $stderr.puts "Put #{crap_factories.map { |m| "`#{m}`" }.to_sentence} in the `Factories` module"
-  $stderr.puts "(or somewhere else appropriate)\e[0m"
-  $stderr.puts
-  exit! 1
-end
+require_relative 'factories'
 
 Dir[File.dirname(__FILE__) + "/shared_examples/**/*.rb"].each {|f| require f }
 
@@ -288,6 +284,8 @@ RSpec::Matchers.define :and_fragment do |expected|
   end
 end
 
+RSpec::Matchers.define_negated_matcher :not_change, :change
+
 module RSpec::Matchers::Helpers
   # allows for matchers to use symbols and literals even though URIs are always strings.
   # i.e. `and_query({assignment_id: @assignment.id})`
@@ -329,6 +327,8 @@ end
 
 RSpec::Expectations.configuration.on_potential_false_positives = :raise
 
+require 'rspec_junit_formatter'
+
 RSpec.configure do |config|
   config.example_status_persistence_file_path = Rails.root.join('tmp', 'rspec')
   config.use_transactional_fixtures = true
@@ -348,6 +348,16 @@ RSpec.configure do |config|
   config.include Onceler::BasicHelpers
   config.include PGCollkeyHelper
   config.project_source_dirs << "gems" # so that failures here are reported properly
+
+  # DOCKER_PROCESSES is only used on Jenkins and we only care to have RspecJunitFormatter on Jenkins.
+  if ENV['DOCKER_PROCESSES']
+    # if file already exists this is a rerun of a failed spec, don't generate new xml.
+    config.add_formatter "RspecJunitFormatter", "log/results.xml" unless File.file?("log/results.xml")
+  end
+
+  if ENV['RSPEC_LOG']
+    config.add_formatter "ParallelTests::RSpec::RuntimeLogger", "log/parallel_runtime_rspec_tests.log"
+  end
 
   if ENV['RAILS_LOAD_ALL_LOCALES'] && RSpec.configuration.filter.rules[:i18n]
     config.around :each do |example|
@@ -383,6 +393,7 @@ RSpec.configure do |config|
     MultiCache.reset
     Course.enroll_user_call_count = 0
     TermsOfService.skip_automatic_terms_creation = true
+    LiveEvents.clear_context!
     $spec_api_tokens = {}
   end
 
@@ -396,7 +407,6 @@ RSpec.configure do |config|
 
   config.before :all do
     raise "all specs need to use transactions" unless using_transactions_properly?
-    Role.ensure_built_in_roles!
   end
 
   Onceler.configure do |c|
@@ -443,36 +453,6 @@ RSpec.configure do |config|
     allow(AttachmentFu::Backends::S3Backend).to receive(:load_s3_config) { StubS3::AWS_CONFIG.dup }
   end
 
-  # this runs on post-merge builds to capture dependencies of each spec;
-  # we then use that data to run just the bare minimum subset of selenium
-  # specs on the patchset builds
-  if ENV["SELINIMUM_CAPTURE"]
-    require "selinimum"
-    require "selinimum/capture"
-
-    config.before :suite do
-      Selinimum::Capture.install!
-    end
-
-    config.prepend_before :all do |group|
-      # ensure these constants get reloaded, otherwise you get the dreaded
-      # `A copy of #{from_mod} has been removed from the module tree but is still active!`
-      BroadcastPolicy.reset_notifiers!
-
-      Selinimum::Capture.current_group = group.class
-    end
-
-    config.around :each do |example|
-      Selinimum::Capture.with_example(example) do
-        example.run
-      end
-    end
-
-    config.after :suite do
-      Selinimum::Capture.report!(ENV["SELINIMUM_BATCH_NAME"])
-    end
-  end
-
   # flush redis before the first spec, and before each spec that comes after
   # one that used redis
   module TrackRedisUsage
@@ -491,7 +471,7 @@ RSpec.configure do |config|
   config.before :each do
     if Canvas.redis_enabled? && Canvas.redis_used
       # yes, we really mean to run this dangerous redis command
-      Shackles.activate(:deploy) { Canvas.redis.flushdb }
+      GuardRail.activate(:deploy) { Canvas.redis.flushdb }
     end
     Canvas.redis_used = false
   end
@@ -538,27 +518,11 @@ RSpec.configure do |config|
   end
 
   def fixture_file_upload(path, mime_type=nil, binary=false)
-    Rack::Test::UploadedFile.new(File.join(ActionController::TestCase.fixture_path, path), mime_type, binary)
+    Rack::Test::UploadedFile.new(File.join(RSpec.configuration.fixture_path, path), mime_type, binary)
   end
 
   def default_uploaded_data
     fixture_file_upload('docs/doc.doc', 'application/msword', true)
-  end
-
-  def factory_with_protected_attributes(ar_klass, attrs, do_save = true)
-    obj = ar_klass.respond_to?(:new) ? ar_klass.new : ar_klass.build
-    attrs.each { |k, v| obj.send("#{k}=", attrs[k]) }
-    obj.save! if do_save
-    obj
-  end
-
-  def update_with_protected_attributes!(ar_instance, attrs)
-    attrs.each { |k, v| ar_instance.send("#{k}=", attrs[k]) }
-    ar_instance.save!
-  end
-
-  def update_with_protected_attributes(ar_instance, attrs)
-    update_with_protected_attributes!(ar_instance, attrs) rescue false
   end
 
   def create_temp_dir!
@@ -580,7 +544,8 @@ RSpec.configure do |config|
     opts = lines.extract_options!
     opts.reverse_merge!(allow_printing: false)
     account = opts[:account] || @account || account_model
-    opts[:batch] ||= account.sis_batches.create!
+    user = opts[:user] || @user || user_model
+    opts[:batch] ||= account.sis_batches.create!(user_id: user.id)
 
     path = generate_csv_file(lines)
     opts[:files] = [path]
@@ -688,7 +653,7 @@ RSpec.configure do |config|
     BACKENDS = %w{FileSystem S3}.map { |backend| AttachmentFu::Backends.const_get(:"#{backend}Backend") }.freeze
 
     class As #:nodoc:
-      private *instance_methods.select { |m| m !~ /(^__|^\W|^binding$)/ }
+      private *instance_methods.select { |m| m !~ /(^__|^\W|^binding$|^untaint$)/ }
 
       def initialize(subject, ancestor)
         @subject = subject
@@ -827,7 +792,10 @@ RSpec.configure do |config|
       @headers = headers
     end
 
-    def read_body(io)
+    def read_body(io = nil)
+      return yield(@body) if block_given?
+      return if io.nil?
+
       io << @body
     end
 
@@ -857,6 +825,10 @@ RSpec.configure do |config|
     def enabled?; true; end
 
     def base; end
+
+    def name
+      id.to_s.humanize
+    end
   end
   def web_conference_plugin_mock(id, settings)
     WebConferencePluginMock.new(id, settings)
@@ -870,49 +842,18 @@ RSpec.configure do |config|
     Rails.application.config.consider_all_requests_local = value
   end
 
-  # a fast way to create a record, especially if you don't need the actual
-  # ruby object. since it just does a straight up insert, you need to
-  # provide any non-null attributes or things that would normally be
-  # inferred/defaulted prior to saving
-  def create_record(klass, attributes, return_type = :id)
-    create_records(klass, [attributes], return_type)[0]
-  end
-
-  # a little wrapper around bulk_insert that gives you back records or ids
-  # in order
-  # NOTE: if you decide you want to go add something like this to canvas
-  # proper, make sure you have it handle concurrent inserts (this does
-  # not, because READ COMMITTED is the default transaction isolation
-  # level)
-  def create_records(klass, records, return_type = :id)
-    return [] if records.empty?
-    klass.transaction do
-      klass.connection.bulk_insert klass.table_name, records
-      return if return_type == :nil
-      scope = klass.order("id DESC").limit(records.size)
-      if return_type == :record
-        scope.to_a.reverse
-      else
-        scope.pluck(:id).reverse
-      end
-    end
-  end
-
   def skip_if_prepended_class_method_stubs_broken
     versions = [
       '2.4.6',
       '2.4.9',
       '2.5.1',
-      '2.5.3',
-      '2.6.0',
-      '2.6.2',
-      '2.6.5'
+      '2.5.3'
     ]
-    skip("stubbing prepended class methods is broken in this version of ruby") if versions.include?(RUBY_VERSION)
+    skip("stubbing prepended class methods is broken in this version of ruby") if versions.include?(RUBY_VERSION) || RUBY_VERSION >= "2.6"
   end
 end
 
-class I18n::Backend::Simple
+class LazyPresumptuousI18nBackend
   def stub(translations)
     @stubs = translations.with_indifferent_access
     singleton_class.instance_eval do
@@ -929,7 +870,7 @@ class I18n::Backend::Simple
   end
 
   def lookup_with_stubs(locale, key, scope = [], options = {})
-    init_translations unless initialized?
+    ensure_initialized
     keys = I18n.normalize_keys(locale, key, scope, options[:separator])
     keys.inject(@stubs){ |h,k| h[k] if h.respond_to?(:key) } || lookup_without_stubs(locale, key, scope, options)
   end
@@ -963,4 +904,8 @@ end
 
 def enable_default_developer_key!
   enable_developer_key_account_binding!(DeveloperKey.default)
+end
+
+def run_live_events_specs?
+  ENV.fetch('RUN_LIVE_EVENTS_SPECS', '0') == '1'
 end

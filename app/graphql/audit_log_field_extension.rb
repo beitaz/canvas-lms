@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2019 - present Instructure, Inc.
 #
@@ -31,7 +33,7 @@ class AuditLogFieldExtension < GraphQL::Schema::FieldExtension
 
     def log(entry, field_name)
       @dynamo.put_item(
-        table_name: "graphql_mutations",
+        table_name: AuditLogFieldExtension.ddb_table_name,
         item: {
           # TODO: this is where you redirect
           "object_id" => log_entry_id(entry, field_name),
@@ -46,6 +48,7 @@ class AuditLogFieldExtension < GraphQL::Schema::FieldExtension
         return_consumed_capacity: "TOTAL"
       )
     rescue Aws::DynamoDB::Errors::ServiceError => e
+      ::Canvas::Errors.capture_exception(:graphql_mutation_audit_logs, e)
       Rails.logger.error "Couldn't log mutation: #{e}"
     end
 
@@ -72,7 +75,7 @@ class AuditLogFieldExtension < GraphQL::Schema::FieldExtension
       end
 
       if entry.respond_to? :root_account_id
-        return entry.root_account
+        return entry.root_account if entry.root_account.present?
       end
 
       case entry
@@ -124,11 +127,21 @@ class AuditLogFieldExtension < GraphQL::Schema::FieldExtension
     Canvas::DynamoDB::DatabaseBuilder.configured?(:auditors)
   end
 
+  def self.ddb_table_name
+    Setting.get("graphql_mutations_ddb_table_name", "graphql_mutations")
+  end
+
   def resolve(object:, arguments:, context:, **rest)
     yield(object, arguments).tap do |value|
       next unless AuditLogFieldExtension.enabled?
 
       mutation = field.mutation
+      # TODO: figure out how to resolve root account for user, communication channels, and conversations
+      next if mutation == Mutations::UpdateNotificationPreferences
+      next if mutation == Mutations::CreateConversation
+      next if mutation == Mutations::DeleteConversationMessage
+      next if mutation == Mutations::DeleteConversation
+      next if mutation == Mutations::AddConversationMessage
 
       logger = Logger.new(mutation, context, arguments)
 

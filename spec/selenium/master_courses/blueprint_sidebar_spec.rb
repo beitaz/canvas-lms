@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -221,6 +223,7 @@ describe "master courses sidebar" do
     end
 
     it "issues screenreader alert when message is full" do
+      skip("broken - LA-979")
       msg = '1234567890123456789012345678901234567890123456789012345678901234567890'
       open_blueprint_sidebar
       send_notification_checkbox.click

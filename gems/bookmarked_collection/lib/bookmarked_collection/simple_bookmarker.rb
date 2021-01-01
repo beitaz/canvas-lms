@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2013 - present Instructure, Inc.
 #
@@ -19,8 +21,8 @@
 # A general purpose bookmarker for most use cases (sorting by one or more
 # columns in ascending order). Uses best_unicode_collation_key for string
 # comparisons (unless otherwise specified).
-# Currently only supports strings and integers, but could be
-# trivially extended to support others (see TYPE_MAP)
+# Currently only supports strings, integers, and datetimes;
+# could be trivially extended to support others (see TYPE_MAP)
 #
 # Example:
 #
@@ -143,7 +145,9 @@ module BookmarkedCollection
     end
 
     def order_by
-      @order_by ||= Arel.sql(columns.map { |col| column_order(col) }.join(', '))
+      @order_by ||= {}
+      locale = defined?(Canvas::ICU) ? Canvas::ICU.locale_for_collation : :default
+      @order_by[locale] ||= Arel.sql(columns.map { |col| column_order(col) }.join(', '))
     end
 
     def column_order(col_name)
@@ -217,7 +221,7 @@ module BookmarkedCollection
         args.concat(clause_args)
         visited << [col, val]
       end
-      sql = "(" << top_clauses.join(" OR ") << ")"
+      sql = "(" + top_clauses.join(" OR ") + ")"
       # one additional clause for index happiness
       index_sql, *index_args = column_comparison(columns.first, ">=", bookmark.first)
       sql = [sql, index_sql].join(" AND ")

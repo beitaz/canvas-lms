@@ -20,25 +20,48 @@ import I18n from 'i18n!permission_button'
 import {func, bool, string} from 'prop-types'
 import React, {Component} from 'react'
 import {connect} from 'react-redux'
-import {Text} from '@instructure/ui-elements'
+import {ApplyTheme} from '@instructure/ui-themeable'
+import {Text} from '@instructure/ui-text'
+import {Flex} from '@instructure/ui-flex'
 import {
   IconPublishSolid,
   IconTroubleLine,
   IconLockSolid,
   IconOvalHalfSolid
 } from '@instructure/ui-icons'
-import {View} from '@instructure/ui-layout'
 import {Menu} from '@instructure/ui-menu'
 import {IconButton} from '@instructure/ui-buttons'
+import {Spinner} from '@instructure/ui-spinner'
 
 import actions from '../actions'
 import propTypes, {ENABLED_FOR_NONE, ENABLED_FOR_ALL, ENABLED_FOR_PARTIAL} from '../propTypes'
 
+// let's cinch up that large margin around the IconButtons so that their
+// decorations snuggle up a little closer and are more obviously a part
+// of the button itself
+const themeOverrides = {
+  [IconButton.theme]: {
+    largeHeight: '1.75rem'
+  }
+}
+
 const MENU_ID_DEFAULT = 1
 const MENU_ID_ENABLED = 2
-const MENU_ID_ENABLED_AND_LOCKED = 3
-const MENU_ID_DISABLED = 4
-const MENU_ID_DISABLED_AND_LOCKED = 5
+const MENU_ID_DISABLED = 3
+const MENU_ID_PARTIAL = 4
+const MENU_ID_LOCKED = 5
+
+const ENABLED_STATE_TO_MENU_ID = {
+  [ENABLED_FOR_NONE]: MENU_ID_DISABLED,
+  [ENABLED_FOR_PARTIAL]: MENU_ID_PARTIAL,
+  [ENABLED_FOR_ALL]: MENU_ID_ENABLED
+}
+
+const SelectionState = {
+  INFERRED: undefined,
+  ENABLED: true,
+  DISABLED: false
+}
 
 export default class PermissionButton extends Component {
   static propTypes = {
@@ -46,13 +69,14 @@ export default class PermissionButton extends Component {
     fixButtonFocus: func.isRequired,
     handleClick: func.isRequired,
     inTray: bool.isRequired,
+    apiBusy: bool.isRequired,
     permission: propTypes.rolePermission.isRequired,
     permissionName: string.isRequired,
     permissionLabel: string.isRequired,
     roleLabel: string,
     roleId: string.isRequired,
     setFocus: bool.isRequired,
-    onFocus: func.isRequired
+    onFocus: func
   }
 
   static defaultProps = {
@@ -99,18 +123,12 @@ export default class PermissionButton extends Component {
     this.setState({showMenu: true})
   }
 
-  checkedSelection(enabled, locked, explicit) {
-    if (!explicit) {
-      return MENU_ID_DEFAULT
-    } else if (enabled && !locked) {
-      return MENU_ID_ENABLED
-    } else if (enabled && locked) {
-      return MENU_ID_ENABLED_AND_LOCKED
-    } else if (!enabled && !locked) {
-      return MENU_ID_DISABLED
-    } else {
-      return MENU_ID_DISABLED_AND_LOCKED
-    }
+  checkedSelection({enabled, locked, explicit}) {
+    if (!explicit) return [MENU_ID_DEFAULT]
+
+    const checked = [ENABLED_STATE_TO_MENU_ID[enabled]]
+    if (locked) checked.push(MENU_ID_LOCKED)
+    return checked
   }
 
   renderButton() {
@@ -124,7 +142,7 @@ export default class PermissionButton extends Component {
 
     const stateColor = enabled === ENABLED_FOR_NONE ? 'danger' : 'success'
 
-    return (
+    const button = (
       <IconButton
         elementRef={this.setupButtonRef}
         onClick={this.toggleMenu}
@@ -134,6 +152,7 @@ export default class PermissionButton extends Component {
         withBackground={false}
         withBorder={false}
         color={stateColor}
+        margin={this.props.inTray ? '0' : 'small 0 0 0'}
         screenReaderLabel={this.renderAllyScreenReaderTag({
           permission: this.props.permission,
           permissionLabel: this.props.permissionLabel,
@@ -143,6 +162,8 @@ export default class PermissionButton extends Component {
         {stateIcon()}
       </IconButton>
     )
+
+    return this.props.inTray ? button : <ApplyTheme theme={themeOverrides}>{button}</ApplyTheme>
   }
 
   renderAllyScreenReaderTag({permission, permissionLabel, roleLabel}) {
@@ -165,111 +186,121 @@ export default class PermissionButton extends Component {
   }
 
   renderMenu(button) {
+    const closeMenuIfInTray = this.props.inTray ? Function.prototype : this.closeMenu
+    const perm = this.props.permission
+    const selected = this.checkedSelection(perm)
+
+    function unboundAdjustPermissions({
+      enabled = undefined,
+      locked = false,
+      explicit = false
+    } = {}) {
+      this.props.handleClick({
+        name: this.props.permissionName,
+        id: this.props.roleId,
+        inTray: this.props.inTray,
+        enabled,
+        locked,
+        explicit
+      })
+    }
+
+    const adjustPermissions = unboundAdjustPermissions.bind(this)
+
+    // Since the enum enabled values exist only here on the front end and
+    // the backend uses only Booleans for the granular permissions, we
+    // will convert them back to Booleans for the API call.
+    function enable() {
+      adjustPermissions({enabled: true, locked: perm.locked, explicit: true})
+    }
+
+    function disable() {
+      adjustPermissions({enabled: false, locked: perm.locked, explicit: true})
+    }
+
+    // Toggling the locked state also requires us to send along the current
+    // overridden enabled value, if any. Otherwise unlocking with an
+    // inferred value will just revert to the default, which isn't always
+    // what we want.
+    function toggleLock() {
+      let enabled = SelectionState.INFERRED
+      if (selected.includes(MENU_ID_DISABLED)) enabled = SelectionState.DISABLED
+      else if (selected.includes(MENU_ID_ENABLED)) enabled = SelectionState.ENABLED
+      adjustPermissions({enabled, locked: !perm.locked, explicit: true})
+    }
+
     return (
       <Menu
         placement="bottom center"
         trigger={button}
         defaultShow={!this.props.inTray}
-        onSelect={this.props.inTray ? () => {} : this.closeMenu}
-        onDismiss={this.props.inTray ? () => {} : this.closeMenu}
-        onBlur={this.props.inTray ? () => {} : this.closeMenu}
         shouldFocusTriggerOnClose={false}
+        onSelect={closeMenuIfInTray}
+        onDismiss={closeMenuIfInTray}
+        onBlur={closeMenuIfInTray}
       >
-        <Menu.Group
-          label=""
-          selected={[
-            this.checkedSelection(
-              this.props.permission.enabled,
-              this.props.permission.locked,
-              this.props.permission.explicit
-            )
+        <Menu.Group label="" selected={selected}>
+          {/* "partially enabled" callout removed for now per Product until they can decide on wording
+          {selected.includes(MENU_ID_PARTIAL) && [
+            <Menu.Item id="permission_table_partial_menu_item" value={MENU_ID_PARTIAL} disabled>
+              <Text>{I18n.t('Partially Enabled')}</Text>
+            </Menu.Item>,
+            <Menu.Separator />
           ]}
-        >
+          */}
           <Menu.Item
             id="permission_table_enable_menu_item"
             value={MENU_ID_ENABLED}
-            onClick={() =>
-              this.props.handleClick({
-                name: this.props.permissionName,
-                id: this.props.roleId,
-                enabled: true,
-                locked: false,
-                explicit: true,
-                inTray: this.props.inTray
-              })
-            }
+            onClick={enable}
           >
             <Text>{I18n.t('Enable')}</Text>
           </Menu.Item>
           <Menu.Item
-            id="permission_table_enable_and_lock_menu_item"
-            value={MENU_ID_ENABLED_AND_LOCKED}
-            onClick={() =>
-              this.props.handleClick({
-                name: this.props.permissionName,
-                id: this.props.roleId,
-                enabled: true,
-                locked: true,
-                explicit: true,
-                inTray: this.props.inTray
-              })
-            }
-          >
-            <Text>{I18n.t('Enable and Lock')}</Text>
-          </Menu.Item>
-          <Menu.Item
             id="permission_table_disable_menu_item"
             value={MENU_ID_DISABLED}
-            onClick={() =>
-              this.props.handleClick({
-                name: this.props.permissionName,
-                id: this.props.roleId,
-                enabled: false,
-                locked: false,
-                explicit: true,
-                inTray: this.props.inTray
-              })
-            }
+            onClick={disable}
           >
-            <Text as="span">{I18n.t('Disable')}</Text>
+            <Text>{I18n.t('Disable')}</Text>
           </Menu.Item>
           <Menu.Item
-            id="permission_table_disable_and_lock_menu_item"
-            value={MENU_ID_DISABLED_AND_LOCKED}
-            onClick={() =>
-              this.props.handleClick({
-                name: this.props.permissionName,
-                id: this.props.roleId,
-                enabled: false,
-                locked: true,
-                explicit: true,
-                inTray: this.props.inTray
-              })
-            }
+            id="permission_table_lock_menu_item"
+            value={MENU_ID_LOCKED}
+            onClick={toggleLock}
           >
-            <Text>{I18n.t('Disable and Lock')}</Text>
+            <Text>{I18n.t('Lock')}</Text>
           </Menu.Item>
-
           <Menu.Separator />
           <Menu.Item
             id="permission_table_use_default_menu_item"
             value={MENU_ID_DEFAULT}
-            onClick={() =>
-              this.props.handleClick({
-                name: this.props.permissionName,
-                id: this.props.roleId,
-                locked: false,
-                explicit: false,
-                inTray: this.props.inTray
-              })
-            }
+            onClick={adjustPermissions}
           >
-            <View as="div" textAlign="center">
-              <Text>{I18n.t('Use Default')}</Text>
-            </View>
+            <Text>{I18n.t('Use Default')}</Text>
           </Menu.Item>
         </Menu.Group>
       </Menu>
+    )
+  }
+
+  renderLockOrSpinner() {
+    const {permission, apiBusy, inTray} = this.props
+    const {locked, explicit} = permission
+    const flexWidth = inTray ? '22px' : '18px'
+    return (
+      <Flex direction="column" margin="none none none xx-small" width={flexWidth}>
+        <Flex.Item size="24px">
+          {locked && explicit && (
+            <Text color="primary">
+              <IconLockSolid data-testid="permission-button-locked" />
+            </Text>
+          )}
+        </Flex.Item>
+        <Flex.Item size="24px">
+          {apiBusy && (
+            <Spinner size="x-small" renderTitle={I18n.t('Waiting for request to complete')} />
+          )}
+        </Flex.Item>
+      </Flex>
     )
   }
 
@@ -287,17 +318,7 @@ export default class PermissionButton extends Component {
         className="ic-permissions__permission-button-container"
       >
         <div>{this.props.inTray || this.state.showMenu ? this.renderMenu(button) : button}</div>
-        <div
-          className={
-            this.props.permission.locked && this.props.permission.explicit
-              ? null
-              : 'ic-hidden-button'
-          }
-        >
-          <Text color="primary">
-            <IconLockSolid />
-          </Text>
-        </div>
+        {this.renderLockOrSpinner()}
       </div>
     )
   }
@@ -310,10 +331,11 @@ function mapStateToProps(state, ownProps) {
   const targetFocusArea =
     (state.nextFocus.targetArea === 'tray' && ownProps.inTray) ||
     (state.nextFocus.targetArea === 'table' && !ownProps.inTray)
+  const apiBusy = state.apiBusy.some(
+    elt => elt.id === ownProps.roleId && elt.name === ownProps.permissionName
+  )
 
-  const stateProps = {
-    setFocus: targetFocusButton && targetFocusArea
-  }
+  const stateProps = {apiBusy, setFocus: targetFocusButton && targetFocusArea}
   return {...stateProps, ...ownProps}
 }
 

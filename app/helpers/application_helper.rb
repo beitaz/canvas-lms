@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -22,6 +24,7 @@ module ApplicationHelper
   include HtmlTextHelper
   include LocaleSelection
   include Canvas::LockExplanation
+  include DatadogRumHelper
 
   def context_user_name_display(user)
     name = user.try(:short_name) || user.try(:name)
@@ -235,7 +238,7 @@ module ApplicationHelper
     @rendered_js_bundles += new_js_bundles
 
     @rendered_preload_chunks ||= []
-    preload_chunks = new_js_bundles.map do |(bundle, plugin)|
+    preload_chunks = new_js_bundles.map do |(bundle, plugin, *)|
       key = "#{plugin ? "#{plugin}-" : ''}#{bundle}"
       Canvas::Cdn::RevManifest.all_webpack_chunks_for(key)
     end.flatten.uniq - @script_chunks - @rendered_preload_chunks # subtract out the ones we already preloaded in the <head>
@@ -249,8 +252,12 @@ module ApplicationHelper
       # to load that "js_bundle". And by the time that runs, the browser will have already
       # started downloading those script urls because of those preload tags above,
       # so it will not cause a new request to be made.
-      concat javascript_tag new_js_bundles.map { |(bundle, plugin)|
-        "(window.bundles || (window.bundles = [])).push('#{plugin ? "#{plugin}-" : ''}#{bundle}');"
+      #
+      # preloading works similarily for window.deferredBundles only that their
+      # execution is delayed until the DOM is ready.
+      concat javascript_tag new_js_bundles.map { |(bundle, plugin, defer)|
+        container = defer ? 'window.deferredBundles' : 'window.bundles'
+        "(#{container} || (#{container} = [])).push('#{plugin ? "#{plugin}-" : ''}#{bundle}');"
       }.join("\n") if new_js_bundles.present?
     end
   end
@@ -513,7 +520,7 @@ module ApplicationHelper
 
   def dataify(obj, *attributes)
     hash = obj.respond_to?(:to_hash) && obj.to_hash
-    res = ""
+    res = +""
     if !attributes.empty?
       attributes.each do |attribute|
         res << %Q{ data-#{h attribute}="#{h(hash ? hash[attribute] : obj.send(attribute))}"}
@@ -726,8 +733,17 @@ module ApplicationHelper
   end
   private :brand_config_account
 
+  def pseudonym_can_see_custom_assets
+    # custom JS could be used to hijack user stuff.  Let's not allow
+    # it to be rendered unless the pseudonym is really
+    # from this account (or trusts, etc).
+    return true unless @current_pseudonym
+    @current_pseudonym.works_for_account?(brand_config_account, ignore_types: [:site_admin])
+  end
+
   def include_account_js
     return if params[:global_includes] == '0' || !@domain_root_account
+    return unless pseudonym_can_see_custom_assets
 
     includes = if @domain_root_account.allow_global_includes? && (abc = active_brand_config(ignore_high_contrast_preference: true))
       abc.css_and_js_overrides[:js_overrides]
@@ -754,6 +770,7 @@ module ApplicationHelper
 
   def include_account_css
     return if disable_account_css?
+    return unless pseudonym_can_see_custom_assets
 
     includes = if @domain_root_account.allow_global_includes? && (abc = active_brand_config(ignore_high_contrast_preference: true))
       abc.css_and_js_overrides[:css_overrides]
@@ -911,7 +928,7 @@ module ApplicationHelper
     end
 
     # set this if you want android users of your site to be prompted to install an android app
-    # you can see an example of the one that instructure uses in public/web-app-manifest/manifest.json
+    # you can see an example of the one that instructure uses in InfoController#web_app_manifest
     manifest_url = Setting.get('web_app_manifest_url', '')
     output << tag("link", rel: 'manifest', href: manifest_url) if manifest_url.present?
 
@@ -976,10 +993,10 @@ module ApplicationHelper
   end
 
   def csp_header
-    header = "Content-Security-Policy"
+    header = +"Content-Security-Policy"
     header << "-Report-Only" unless csp_enforced?
 
-    header
+    header.freeze
   end
 
   def include_files_domain_in_csp
@@ -988,7 +1005,7 @@ module ApplicationHelper
   end
 
   def add_csp_for_root
-    return unless request.format.html? || request.format == "*/*"
+    return unless response.media_type == 'text/html'
     return unless csp_enabled?
     return if csp_report_uri.empty? && !csp_enforced?
 
@@ -1051,8 +1068,7 @@ module ApplicationHelper
   end
 
   def planner_enabled?
-    !!(@current_user && @domain_root_account&.feature_enabled?(:student_planner) &&
-      @current_user.has_student_enrollment?)
+    !!(@current_user&.has_student_enrollment?)
   end
 
   def will_paginate(collection, options = {})
@@ -1122,7 +1138,7 @@ module ApplicationHelper
   def context_module_sequence_items_by_asset_id(asset_id, asset_type)
     # assemble a sequence of content tags in the course
     # (break ties on module position by module id)
-    tag_ids = @context.sequential_module_item_ids & Shackles.activate(:slave) { @context.module_items_visible_to(@current_user).reorder(nil).pluck(:id) }
+    tag_ids = @context.sequential_module_item_ids & GuardRail.activate(:secondary) { @context.module_items_visible_to(@current_user).reorder(nil).pluck(:id) }
 
     # find content tags to include
     tag_indices = []
@@ -1225,15 +1241,28 @@ module ApplicationHelper
     )
   end
 
+  def file_location_mode?
+    in_app? && request.headers["X-Canvas-File-Location"] == "True"
+  end
+
+  def render_file_location(location)
+    headers["X-Canvas-File-Location"] = "True"
+    render json: {
+      location: location,
+      token: file_authenticator.instfs_bearer_token
+    }
+  end
+
   def authenticated_download_url(attachment)
-    file_authenticator.download_url(attachment)
+    file_authenticator.download_url(attachment, options: {original_url: request.original_url})
   end
 
   def authenticated_inline_url(attachment)
-    file_authenticator.inline_url(attachment)
+    file_authenticator.inline_url(attachment, options: {original_url: request.original_url})
   end
 
   def authenticated_thumbnail_url(attachment, options={})
+    options[:original_url] = request.original_url
     file_authenticator.thumbnail_url(attachment, options)
   end
 
@@ -1253,10 +1282,6 @@ module ApplicationHelper
     end
   end
 
-  def browser_performance_monitor_embed
-    # stub
-  end
-
   def prefetch_xhr(url, id: nil, options: {})
     id ||= url
     opts = {
@@ -1266,5 +1291,18 @@ module ApplicationHelper
       }
     }.deep_merge(options)
     javascript_tag "(window.prefetched_xhrs = (window.prefetched_xhrs || {}))[#{id.to_json}] = fetch(#{url.to_json}, #{opts.to_json})"
+  end
+
+  def mastery_scales_js_env
+    if @domain_root_account.feature_enabled?(:account_level_mastery_scales)
+      js_env(
+        ACCOUNT_LEVEL_MASTERY_SCALES: true,
+        IMPROVED_OUTCOMES_MANAGEMENT: @domain_root_account.feature_enabled?(:improved_outcomes_management),
+        MASTERY_SCALE: {
+          outcome_proficiency: @context.resolved_outcome_proficiency&.as_json,
+          outcome_calculation_method: @context.resolved_outcome_calculation_method&.as_json
+        }
+      )
+    end
   end
 end

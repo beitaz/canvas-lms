@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -44,6 +46,7 @@ module Lti
                   :assignment_selection,
                   :assignment_view,
                   :collaboration,
+                  :conference_selection,
                   :course_assignments_menu,
                   :course_home_sub_navigation,
                   :course_navigation,
@@ -64,6 +67,7 @@ module Lti
                   :quiz_menu,
                   :quiz_index_menu,
                   :resource_selection,
+                  :submission_type_selection,
                   :student_context_card,
                   :tool_configuration,
                   :user_navigation,
@@ -87,5 +91,11 @@ module Lti
 
     validates_inclusion_of :placement, :in => PLACEMENT_LOOKUP.values
 
+    def self.valid_placements(root_account)
+      PLACEMENTS.dup.tap do |p|
+        p.delete(:conference_selection) unless Account.site_admin.feature_enabled?(:conference_selection_lti_placement)
+        p.delete(:submission_type_selection) unless root_account&.feature_enabled?(:submission_type_tool_placement)
+      end
+    end
   end
 end

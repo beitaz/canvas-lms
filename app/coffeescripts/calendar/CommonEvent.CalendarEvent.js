@@ -55,7 +55,11 @@ Object.assign(CalendarEvent.prototype, {
     this.editable = true
     this.lockedTitle = this.object.parent_event_id != null
     this.description = data.description
-    this.addClass(`group_${this.contextCode()}`)
+    // in some rare cases, this.contextCode returns a comma separated list
+    const contexts = this.contextCode()?.split(',')
+    contexts?.forEach(c => {
+      this.addClass(`group_${c}`)
+    })
     if (this.isAppointmentGroupEvent()) {
       this.addClass('scheduler-event')
       if (this.object.reserved) {
@@ -69,6 +73,7 @@ Object.assign(CalendarEvent.prototype, {
       }
       this.editable = false
     }
+    this.webConference = data.web_conference
     return CalendarEvent.__super__.copyDataFromObject.apply(this, arguments)
   },
 
@@ -153,7 +158,8 @@ Object.assign(CalendarEvent.prototype, {
     }
     if (
       this.calendarEvent.available_slots > 0 &&
-      (this.calendarEvent.child_events && this.calendarEvent.child_events.length)
+      this.calendarEvent.child_events &&
+      this.calendarEvent.child_events.length
     ) {
       status = I18n.t('%{availableSlots} more available', {
         availableSlots: I18n.n(this.calendarEvent.available_slots)
@@ -185,7 +191,14 @@ Object.assign(CalendarEvent.prototype, {
     }
 
     const names = ((this.calendarEvent && this.calendarEvent.child_events) || []).map(
-      child_event => child_event.user && child_event.user.sortable_name
+      child_event => {
+        if (child_event.user) {
+          return child_event.user.sortable_name
+        } else if (child_event.group) {
+          return child_event.group.name
+        }
+        return null
+      }
     )
     let sorted = names.sort((a, b) => natcompare.strings(a, b))
 

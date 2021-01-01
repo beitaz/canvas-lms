@@ -142,10 +142,10 @@ class GradeSummaryPresenter
   end
 
   def assignments_visible_to_student
-    includes = [:assignment_overrides]
+    includes = [:assignment_overrides, :post_policy]
     includes << :assignment_group if @assignment_order == :assignment_group
     AssignmentGroup.
-      visible_assignments(student, @context, all_groups, includes).
+      visible_assignments(student, @context, all_groups, includes: includes).
       where.not(submission_types: %w(not_graded wiki_page)).
       except(:order)
   end
@@ -184,12 +184,16 @@ class GradeSummaryPresenter
 
   def submissions
     @submissions ||= begin
-      ss = @context.submissions
-      .preload(:visible_submission_comments,
-                {:rubric_assessments => [:rubric, :rubric_association]},
-                :content_participations)
-      .where("assignments.workflow_state != 'deleted'")
-      .where(user_id: student).to_a
+      ss = @context.submissions.
+      preload(
+        :visible_submission_comments,
+        {:rubric_assessments => [:rubric, :rubric_association]},
+        :content_participations,
+        {:assignment => [:context, :post_policy]}
+      ).
+      joins(:assignment).
+      where("assignments.workflow_state != 'deleted'").
+      where(user_id: student).to_a
 
       if vericite_enabled? || turnitin_enabled?
         ActiveRecord::Associations::Preloader.new.preload(ss, :originality_reports)
@@ -233,13 +237,10 @@ class GradeSummaryPresenter
   end
 
   def hidden_submissions?
-    if @context.post_policies_enabled?
-      submissions.any? do |sub|
-        return !sub.posted? if sub.assignment.post_manually?
-        sub.graded? && !sub.posted?
-      end
-    else
-      assignments.any?(&:muted?)
+    submissions.any? do |sub|
+      return !sub.posted? if sub.assignment.post_manually?
+
+      sub.graded? && !sub.posted?
     end
   end
 

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2019 - present Instructure, Inc.
 #
@@ -91,7 +93,7 @@ def find_submission(submission_id)
 end
 
 def get_and_verify_attachments!(file_ids)
-  attachments = current_user.attachments.active.where(id: file_ids)
+  attachments = current_user.submittable_attachments.active.where(id: file_ids)
 
   unless file_ids.size == attachments.size
     attachment_ids = attachments.map(&:id)

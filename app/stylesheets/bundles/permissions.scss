@@ -52,21 +52,16 @@ $darkRowBg: #f9f9f9;
 .ic-permissions__table-container {
   // dimensions of the table on screen, the table will scroll inside this container
   // might want to change to match design
-  width: 72vw;
-  height: 64vh;
+
+  margin: $ic-sp 0;
+  @include breakpoint(tablet) {
+    height: 64vh;
+  }
 
   // needed for scrolling + sticky headers
   overflow: auto;
   position: relative;
-
   border: 1px solid $border-color;
-
-  margin: direction-sides(20px 20px 20px 0px);
-}
-
-.permissions-v2__header_contianer {
-  width: 70vw;
-  margin: direction-sides(20px 20px 20px 0px);
 }
 
 .ic-permissions_role_tray {
@@ -116,11 +111,6 @@ $darkRowBg: #f9f9f9;
   // of the difference in size.
   .ic-permissions__cell-content {
     margin-#{direction(left)}: 18px;
-    text-align: center;
-  }
-
-  .ic-permissions__cell-content-checkbox {
-    margin-#{direction(left)}: 10px;
     text-align: center;
   }
 

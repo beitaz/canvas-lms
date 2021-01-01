@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -70,7 +72,7 @@ class HostUrl
       res ||= ENV['RAILS_HOST_WITH_PORT']
       res
     end
-    
+
     def file_host_with_shard(account, current_host = nil)
       return [@@file_host, Shard.default] if @@file_host
       res = nil

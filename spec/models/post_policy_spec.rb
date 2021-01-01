@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -87,6 +89,25 @@ describe PostPolicy do
             policy.update!(post_manually: true)
           }.to change { course.updated_at }.to(save_time)
         end
+      end
+    end
+  end
+
+  describe "root account ID" do
+    let_once(:root_account) { Account.create! }
+    let_once(:subaccount) { Account.create(root_account: root_account) }
+    let_once(:course) { Course.create!(account: subaccount) }
+
+    context "for a post policy associated with a course" do
+      it "is set to the course's root account ID" do
+        expect(course.default_post_policy.root_account_id).to eq root_account.id
+      end
+    end
+
+    context "for a post policy associated with an assignment" do
+      it "is set to the associated course's root account ID" do
+        assignment = course.assignments.create!
+        expect(assignment.post_policy.root_account_id).to eq root_account.id
       end
     end
   end

@@ -25,7 +25,7 @@ import $ from 'jquery'
 import ready from '@instructure/ready'
 import Backbone from 'Backbone'
 import splitAssetString from 'compiled/str/splitAssetString'
-import {isMathMLOnPage, loadMathJax} from 'mathml'
+import mathml from 'mathml'
 import preventDefault from 'compiled/fn/preventDefault'
 import loadBundle from 'bundles-generated'
 
@@ -51,6 +51,7 @@ window.bundles.push = loadBundle
 window.bundles.forEach(loadBundle)
 
 if (ENV.csp)
+  // eslint-disable-next-line promise/catch-or-return
   import('./account_settings/alert_enforcement').then(({default: setupCSP}) =>
     setupCSP(window.document)
   )
@@ -61,6 +62,7 @@ $('html').removeClass('scripts-not-loaded')
 
 $('.help_dialog_trigger').click(event => {
   event.preventDefault()
+  // eslint-disable-next-line promise/catch-or-return
   import('compiled/helpDialog').then(({default: helpDialog}) => helpDialog.open())
 })
 
@@ -76,9 +78,10 @@ $('body').on(
 if (
   window.ENV.NEW_USER_TUTORIALS &&
   window.ENV.NEW_USER_TUTORIALS.is_enabled &&
-  (window.ENV.context_asset_string &&
-    splitAssetString(window.ENV.context_asset_string)[0] === 'courses')
+  window.ENV.context_asset_string &&
+  splitAssetString(window.ENV.context_asset_string)[0] === 'courses'
 ) {
+  // eslint-disable-next-line promise/catch-or-return
   import('./new_user_tutorial/initializeNewUserTutorials').then(
     ({default: initializeNewUserTutorials}) => {
       initializeNewUserTutorials()
@@ -86,26 +89,64 @@ if (
   )
 }
 
-// edge < 15 does not support css vars
-// edge >= 15 claims to, but is currently broken
-const edge = window.navigator.userAgent.indexOf('Edge') > -1
-const supportsCSSVars =
-  !edge && window.CSS && window.CSS.supports && window.CSS.supports('(--foo: red)')
-if (!supportsCSSVars) {
-  import('./canvasCssVariablesPolyfill').then(({default: canvasCssVariablesPolyfill}) => {
-    window.canvasCssVariablesPolyfill = canvasCssVariablesPolyfill
-  })
-}
-
 ;(window.requestIdleCallback || window.setTimeout)(() => {
   import('./runOnEveryPageButDontBlockAnythingElse')
 })
 
 ready(() => {
+  ;(window.deferredBundles || []).forEach(loadBundle)
+
+  // LS-1662: there are math equations on the page that
+  // we don't see, so remain invisible and aren't
+  // typeset my MathJax. Let's trick Canvas into knowing
+  // there's math on the page by putting some there.
+  if (!/quizzes\/\d*\/edit/.test(window.location.pathname)) {
+    if (document.querySelector('.math_equation_latex')) {
+      const elem = document.createElement('math')
+      elem.innerHTML = '&nbsp;'
+      document.body.appendChild(elem)
+    }
+  }
+
+  if (!ENV?.FEATURES?.new_math_equation_handling) {
+    // This is in a setTimeout to have it run on the next time through the event loop
+    // so that the code that actually renders the user_content runs first,
+    // because it has to be rendered before we can check if isMathMLOnPage
+    setTimeout(() => {
+      if (mathml.isMathOnPage()) mathml.loadMathJax(undefined)
+    }, 5)
+    return
+  }
+
   // This is in a setTimeout to have it run on the next time through the event loop
   // so that the code that actually renders the user_content runs first,
-  // because it has to be rendered before we can check if isMathMLOnPage
+  // because it has to be rendered before we can check if isMathOnPage
   setTimeout(() => {
-    if (isMathMLOnPage()) loadMathJax('TeX-MML-AM_HTMLorMML')
-  }, 5)
+    window.dispatchEvent(
+      new CustomEvent(mathml.processNewMathEventName, {
+        detail: {target: document.body}
+      })
+    )
+  }, 0)
+
+  const observer = new MutationObserver((mutationList, _observer) => {
+    for (let m = 0; m < mutationList.length; ++m) {
+      if (mutationList[m]?.addedNodes?.length) {
+        const addedNodes = mutationList[m].addedNodes
+        for (let n = 0; n < addedNodes.length; ++n) {
+          const node = addedNodes[n]
+          if (node.nodeType !== Node.ELEMENT_NODE) continue
+          const processNewMathEvent = new CustomEvent(mathml.processNewMathEventName, {
+            detail: {target: node}
+          })
+          window.dispatchEvent(processNewMathEvent)
+        }
+      }
+    }
+  })
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  })
 })

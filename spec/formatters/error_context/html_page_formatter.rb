@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -60,13 +62,14 @@ module ErrorContext
       base_path = "../" + ("../" * summary.spec_path.count("/"))
       errors = ErrorSummary.recent_spec_runs.reverse.map do |run|
         location = ERB::Util.html_escape(run[:location])
-        if run[:pending]
+        contents = if run[:pending]
           "bin/rspec #{location} (pending)"
         elsif run[:exception]
           "bin/rspec <a href=\"#{base_path + location}/index.html\">#{location}</a> (failed)"
         else
           "bin/rspec #{location}"
         end
+        "#{run[:recorded_at]}: #{contents}"
       end.join("<br>")
 
       "(newest)<br>#{errors}<br>(oldest)".html_safe

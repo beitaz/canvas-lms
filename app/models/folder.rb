@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -32,7 +34,7 @@ class Folder < ActiveRecord::Base
   MY_FILES_FOLDER_NAME = "my files"
   CONVERSATION_ATTACHMENTS_FOLDER_NAME = "conversation attachments"
 
-  belongs_to :context, polymorphic: [:user, :group, :account, :course]
+  belongs_to :context, polymorphic: [:user, :group, :account, :course], optional: false
   belongs_to :cloned_item
   belongs_to :parent_folder, :class_name => "Folder"
   has_many :file_attachments, :class_name => "Attachment"
@@ -43,6 +45,7 @@ class Folder < ActiveRecord::Base
 
   acts_as_list :scope => :parent_folder
 
+  before_create :populate_root_account_id
   before_save :infer_full_name
   after_save :update_sub_folders
   after_destroy :clean_up_children
@@ -59,6 +62,16 @@ class Folder < ActiveRecord::Base
       self.active_file_attachments
     else
       self.visible_file_attachments.not_locked
+    end
+  end
+
+  def populate_root_account_id
+    if self.context_type == "User"
+      self.root_account_id = 0
+    elsif context_type == 'Account' && context.root_account?
+      self.root_account_id = self.context_id
+    else
+      self.root_account_id = self.context.root_account_id
     end
   end
 
@@ -258,6 +271,9 @@ class Folder < ActiveRecord::Base
     self.attributes.delete_if{|k,v| [:id, :full_name, :parent_folder_id].include?(k.to_sym) }.each do |key, val|
       dup.send("#{key}=", val)
     end
+    if self.unique_type && context.folders.active.where(:unique_type => self.unique_type).exists?
+      dup.unique_type = nil # we'll just copy the folder as a normal one and leave the existing unique_type'd one alone
+    end
     dup.context = context
     if options[:include_subcontent] != false
       dup.save!
@@ -304,7 +320,7 @@ class Folder < ActiveRecord::Base
     context.shard.activate do
       Folder.unique_constraint_retry do
         root_folder = context.folders.active.where(parent_folder_id: nil, name: name).first
-        root_folder ||= Shackles.activate(:master) {context.folders.create!(:name => name, :full_name => name, :workflow_state => "visible")}
+        root_folder ||= GuardRail.activate(:primary) {context.folders.create!(:name => name, :full_name => name, :workflow_state => "visible")}
         root_folders = [root_folder]
       end
     end
@@ -316,8 +332,11 @@ class Folder < ActiveRecord::Base
     folder = nil
     context.shard.activate do
       Folder.unique_constraint_retry do
-        folder = context.folders.active.where(:unique_type => unique_type).take
-        folder ||= context.folders.create!(:unique_type => unique_type, :name => default_name_proc.call, :parent_folder_id => Folder.root_folders(context).first)
+        folder = context.folders.active.where(unique_type: unique_type).take
+        folder ||= context.folders.create!(unique_type: unique_type,
+                                           name: default_name_proc.call,
+                                           parent_folder_id: Folder.root_folders(context).first,
+                                           workflow_state: 'hidden')
       end
     end
     folder
@@ -444,8 +463,9 @@ class Folder < ActiveRecord::Base
   end
 
   def currently_locked
-    self.locked || (self.lock_at && Time.now > self.lock_at) || (self.unlock_at && Time.now < self.unlock_at) || self.workflow_state == 'hidden'
+    self.locked || (self.lock_at && Time.zone.now > self.lock_at) || (self.unlock_at && Time.zone.now < self.unlock_at) || self.workflow_state == 'hidden'
   end
+  alias currently_locked? currently_locked
 
   set_policy do
     given { |user, session| self.visible? && self.context.grants_right?(user, session, :read) }

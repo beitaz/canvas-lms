@@ -30,7 +30,9 @@ import userSettings from '../../userSettings'
 import GradingPeriodsAPI from '../../api/gradingPeriodsApi'
 import IndexMenu from 'jsx/assignments/IndexMenu'
 import configureIndexMenuStore from 'jsx/assignments/store/indexMenuStore'
+import BulkEditIndex from 'jsx/assignments/bulk_edit/BulkEditIndex'
 import '../../jquery.rails_flash_notifications'
+import easy_student_view from 'easy_student_view'
 
 export default class IndexView extends Backbone.View
   @mixin AssignmentKeyBindingsMixin
@@ -53,16 +55,20 @@ export default class IndexView extends Backbone.View
   els:
     '#addGroup': '$addGroupButton'
     '#assignmentSettingsCog': '$assignmentSettingsButton'
+    '#settingsMountPoint': '$settingsMountPoint'
+    '#bulkEditRoot': '$bulkEditRoot'
 
   initialize: ->
     super
     @collection.once 'reset', @enableSearch, @
     @collection.on 'cancelSearch', @clearSearch, @
+    @bulkEditMode = false
 
   toJSON: ->
     json = super
     json.course_home = ENV.COURSE_HOME
     json.weight_final_grades = ENV.WEIGHT_FINAL_GRADES
+    json.bulkEditMode = @bulkEditMode
     json
 
   afterRender: ->
@@ -87,31 +93,64 @@ export default class IndexView extends Backbone.View
       contextType = contextInfo[0]
       contextId = parseInt(contextInfo[1], 10)
 
+      requestBulkEditFn =
+        (!ENV.COURSE_HOME && ENV.FEATURES.assignment_bulk_edit && @requestBulkEdit) ||
+        undefined
+
+      if @$settingsMountPoint.length
+        ReactDOM.render(
+          React.createElement(IndexMenu, {
+            store: @indexMenuStore,
+            contextType: contextType,
+            contextId: contextId,
+            requestBulkEdit: requestBulkEditFn,
+            setTrigger: @assignmentSettingsView.setTrigger.bind(@assignmentSettingsView)
+            setDisableTrigger: @assignmentSyncSettingsView.setTrigger.bind(@assignmentSyncSettingsView)
+            registerWeightToggle: @assignmentSettingsView.on.bind(@assignmentSettingsView)
+            disableSyncToSis: @assignmentSyncSettingsView.openDisableSync.bind(@assignmentSyncSettingsView)
+            sisName: ENV.SIS_NAME
+            postToSisDefault: ENV.POST_TO_SIS_DEFAULT
+            hasAssignments: ENV.HAS_ASSIGNMENTS,
+            assignmentGroupsCollection: @collection
+          }),
+          @$settingsMountPoint[0]
+        )
+
+    if @bulkEditMode && @$bulkEditRoot.length
       ReactDOM.render(
-        React.createElement(IndexMenu, {
-          store: @indexMenuStore,
-          contextType: contextType,
-          contextId: contextId,
-          setTrigger: @assignmentSettingsView.setTrigger.bind(@assignmentSettingsView)
-          setDisableTrigger: @assignmentSyncSettingsView.setTrigger.bind(@assignmentSyncSettingsView)
-          registerWeightToggle: @assignmentSettingsView.on.bind(@assignmentSettingsView)
-          disableSyncToSis: @assignmentSyncSettingsView.openDisableSync.bind(@assignmentSyncSettingsView)
-          sisName: ENV.SIS_NAME
-          postToSisDefault: ENV.POST_TO_SIS_DEFAULT
-          hasAssignments: ENV.HAS_ASSIGNMENTS,
-          assignmentGroupsCollection: @collection
+        React.createElement(BulkEditIndex, {
+          courseId: ENV.COURSE_ID
+          onCancel: @cancelBulkEdit
+          onSave: @handleBulkEditSaved
         }),
-        $('#settingsMountPoint')[0]
+        @$bulkEditRoot[0]
       )
 
     @filterKeyBindings() if !@canManage()
 
     @ensureContentStyle()
 
-    @kbDialog = new KeyboardNavDialog().render(keyboardNavTemplate({keyBindings:@keyBindings}))
-    window.onkeydown = @focusOnAssignments
+    unless (ENV.disable_keyboard_shortcuts)
+      @kbDialog = new KeyboardNavDialog().render(keyboardNavTemplate({keyBindings:@keyBindings}))
+      window.onkeydown = @focusOnAssignments
 
     @selectGradingPeriod()
+
+  requestBulkEdit: =>
+    easy_student_view.hide()
+    @bulkEditMode = true
+    @render()
+
+  handleBulkEditSaved: =>
+    @bulkEditSaved = true
+
+  cancelBulkEdit: =>
+    easy_student_view.show()
+    if @bulkEditSaved
+      location.reload()
+    else
+      @bulkEditMode = false
+      @render()
 
   enableSearch: ->
     @$('#search_term').prop 'disabled', false

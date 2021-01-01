@@ -52,6 +52,12 @@ export default class TrayController {
     this._editor = editor
     this.$img = editor.selection.getNode()
     this._shouldOpen = true
+
+    if (bridge.focusedEditor) {
+      // Dismiss any content trays that may already be open
+      bridge.hideTrays()
+    }
+
     this._renderTray()
   }
 
@@ -67,17 +73,11 @@ export default class TrayController {
 
     if (imageOptions.displayAs === 'embed') {
       editor.dom.setAttribs($img, {
-        alt: imageOptions.isDecorativeImage ? '' : imageOptions.altText,
-        'data-is-decorative': imageOptions.isDecorativeImage ? 'true' : null,
+        alt: imageOptions.altText,
+        role: imageOptions.isDecorativeImage ? 'presentation' : null,
         width: imageOptions.appliedWidth,
-        height: imageOptions.appliedHeight
-      })
-
-      // when the image was first added to the rce, we applied
-      // max-width and max-height. Remove them from the style now
-      editor.dom.setStyles($img, {
-        'max-height': '',
-        'max-width': ''
+        height: imageOptions.appliedHeight,
+        'data-is-decorative': null // replaced by role=presentation
       })
 
       // tell tinymce so the context toolbar resets
@@ -114,11 +114,13 @@ export default class TrayController {
        */
       this._renderId++
     }
+    const io = asImageEmbed(this.$img)
+    io.isLinked = this._editor.selection.getSel().anchorNode.tagName === 'A'
 
     const element = (
       <ImageOptionsTray
         key={this._renderId}
-        imageOptions={asImageEmbed(this.$img)}
+        imageOptions={io}
         onEntered={() => {
           this._isOpen = true
         }}

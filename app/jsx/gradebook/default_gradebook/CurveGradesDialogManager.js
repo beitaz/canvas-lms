@@ -17,9 +17,10 @@
  */
 
 import $ from 'jquery'
-import CurveGradesDialog from 'compiled/shared/CurveGradesDialog'
 import I18n from 'i18n!gradebook'
 import 'compiled/jquery.rails_flash_notifications'
+
+import AsyncComponents from './AsyncComponents'
 
 const CurveGradesDialogManager = {
   createCurveGradesAction(assignment, students, {isAdmin, contextUrl, submissionsLoaded} = {}) {
@@ -29,9 +30,10 @@ const CurveGradesDialogManager = {
         !submissionsLoaded ||
         gradingType === 'pass_fail' ||
         pointsPossible == null ||
-        pointsPossible === 0,
+        pointsPossible === 0 ||
+        !assignment.grades_published,
 
-      onSelect(onClose) {
+      async onSelect(onClose) {
         if (!isAdmin && assignment.inClosedGradingPeriod) {
           return $.flashError(
             I18n.t(
@@ -40,10 +42,13 @@ const CurveGradesDialogManager = {
             )
           )
         }
+
+        const CurveGradesDialog = await AsyncComponents.loadCurveGradesDialog()
         const dialog = new CurveGradesDialog({assignment, students, context_url: contextUrl})
         dialog.show(onClose)
       }
     }
   }
 }
+
 export default CurveGradesDialogManager

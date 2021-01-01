@@ -92,8 +92,9 @@ class RceApiSource {
     const headers = headerFor(this.jwt)
     const uri = this.baseUri('session')
     return this.apiReallyFetch(uri, headers)
-      .then(() => {
+      .then(data => {
         this.hasSession = true
+        return data
       })
       .catch(throwConnectionError)
   }
@@ -104,7 +105,9 @@ class RceApiSource {
     return {
       links: [],
       bookmark: this.uriFor(endpoint, props),
-      loading: false
+      isLoading: false,
+      hasMore: true,
+      searchString: props.searchString
     }
   }
 
@@ -174,6 +177,12 @@ class RceApiSource {
     })
   }
 
+  fetchLinks(key, props) {
+    const {collections} = props
+    const bookmark = collections[key].bookmark || this.uriFor(key, props)
+    return this.fetchPage(bookmark)
+  }
+
   fetchRootFolder(props) {
     return this.fetchPage(this.uriFor('folders', props), this.jwt)
   }
@@ -197,12 +206,72 @@ class RceApiSource {
     return this.apiPost(this.baseUri('media_objects'), headerFor(this.jwt), body)
   }
 
-  updateMediaObject(props, {media_object_id, title}) {
+  updateMediaObject(apiProps, {media_object_id, title}) {
     const uri = `${this.baseUri(
       'media_objects',
-      props.host
+      apiProps.host
     )}/${media_object_id}?user_entered_title=${encodeURIComponent(title)}`
     return this.apiPost(uri, headerFor(this.jwt), null, 'PUT')
+  }
+
+  // PUT to //RCS/api/media_objects/:mediaId/media_tracks [{locale, content}, ...]
+  // receive back a 200 with the new subtitles, or a 4xx error
+  updateClosedCaptions(apiProps, {media_object_id, subtitles}) {
+    // read all the subtitle files' contents
+    const file_promises = []
+    subtitles.forEach(st => {
+      if (st.isNew) {
+        const p = new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = function(e) {
+            resolve({locale: st.locale, content: e.target.result})
+          }
+          reader.onerror = function(e) {
+            e.target.abort()
+            reject(e)
+          }
+          reader.readAsText(st.file)
+        })
+        file_promises.push(p)
+      } else {
+        file_promises.push(Promise.resolve({locale: st.locale}))
+      }
+    })
+
+    // once all the promises from reading the subtitles' files
+    // have resolved, PUT the resulting subtitle objects to the RCS
+    // when that completes, the update_promise will resolve
+    const update_promise = new Promise((resolve, reject) => {
+      Promise.all(file_promises)
+        .then(closed_captions => {
+          const uri = `${this.baseUri(
+            'media_objects',
+            apiProps.host
+          )}/${media_object_id}/media_tracks`
+          return this.apiPost(uri, headerFor(this.jwt), closed_captions, 'PUT')
+            .then(resolve)
+            .catch(e => {
+              console.error('failed updating media_tracks') // eslint-disable-line no-console
+              reject(e)
+            })
+        })
+        .catch(_e => {
+          this.alertFunc({
+            text: formatMessage('Reading a media track file failed. Aborting.'),
+            variant: 'error'
+          })
+        })
+    })
+    return update_promise
+  }
+
+  // GET /media_objects/:mediaId/media_tracks
+  // receive back the current list of media_tracks
+  fetchClosedCaptions(_mediaId) {
+    return Promise.resolve([
+      {locale: 'af', content: '1\r\n00:00:00,000 --> 00:00:01,251\r\nThis is the content\r\n'},
+      {locale: 'es', content: '1\r\n00:00:00,000 --> 00:00:01,251\r\nThis is the content\r\n'}
+    ])
   }
 
   // fetches folders for the given context to upload files to
@@ -292,7 +361,7 @@ class RceApiSource {
       // it requires Canvas authentication. we also don't have an RCE API
       // endpoint to forward it through.
       const {pathname} = parse(uploadResults.location)
-      const matchData = pathname.match(/^\/api\/v1\/files\/(\d+)$/)
+      const matchData = pathname.match(/^\/api\/v1\/files\/((?:\d+~)?\d+)$/)
       if (!matchData) {
         const error = new Error('cannot determine file ID from location')
         error.location = uploadResults.location
@@ -356,7 +425,7 @@ class RceApiSource {
     uri = this.normalizeUriProtocol(uri)
     return fetch(uri, {headers})
       .then(response => {
-        if (response.status == 401) {
+        if (response.status === 401) {
           // retry once with fresh token
           return this.buildRetryHeaders(headers).then(newHeaders => {
             return fetch(uri, {headers: newHeaders})
@@ -382,13 +451,17 @@ class RceApiSource {
     headers = {...headers, 'Content-Type': 'application/json'}
     const fetchOptions = {
       method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined
+      headers
+    }
+    if (body) {
+      fetchOptions.body = JSON.stringify(body)
+    } else {
+      fetchOptions.form = body
     }
     uri = this.normalizeUriProtocol(uri)
     return fetch(uri, fetchOptions)
       .then(response => {
-        if (response.status == 401) {
+        if (response.status === 401) {
           // retry once with fresh token
           return this.buildRetryHeaders(fetchOptions.headers).then(newHeaders => {
             const newOptions = {...fetchOptions, headers: newHeaders}
@@ -402,14 +475,12 @@ class RceApiSource {
       .then(parseResponse)
       .catch(throwConnectionError)
       .catch(e => {
+        console.error(e) // eslint-disable-line no-console
         this.alertFunc({
-          text: formatMessage(
-            'Something went wrong uploading, check your connection and try again.'
-          ),
+          text: formatMessage('Something went wrong, check your connection and try again.'),
           variant: 'error'
         })
         throw e
-        // console.error(e) // eslint-disable-line no-console
       })
   }
 
@@ -463,21 +534,34 @@ class RceApiSource {
   //   //rce.docker/api/wikiPages?context_type=course&context_id=42
   //
   uriFor(endpoint, props) {
-    const {host, contextType, contextId} = props
+    const {host, contextType, contextId, sortBy, searchString} = props
     let extra = ''
     switch (endpoint) {
       case 'images':
-        extra = `&content_types=image${getSortParams(props.sort, props.order)}`
+        extra = `&content_types=image${getSortParams(sortBy.sort, sortBy.dir)}${getSearchParam(
+          searchString
+        )}`
         break
       case 'media': // when requesting media files via the documents endpoint
-        extra = `&content_types=video,audio${getSortParams(props.sort, props.order)}`
+        extra = `&content_types=video,audio${getSortParams(
+          sortBy.sort,
+          sortBy.dir
+        )}${getSearchParam(searchString)}`
         break
       case 'documents':
-        extra = `&exclude_content_types=image,video,audio${getSortParams(props.sort, props.order)}`
+        extra = `&exclude_content_types=image,video,audio${getSortParams(
+          sortBy.sort,
+          sortBy.dir
+        )}${getSearchParam(searchString)}`
         break
       case 'media_objects': // when requesting media objects (this is the currently used branch)
-        extra = getSortParams(props.sort === 'alphabetical' ? 'title' : 'date', props.order)
+        extra = `${getSortParams(
+          sortBy.sort === 'alphabetical' ? 'title' : 'date',
+          sortBy.dir
+        )}${getSearchParam(searchString)}`
         break
+      default:
+        extra = getSearchParam(searchString)
     }
     return `${this.baseUri(
       endpoint,
@@ -486,14 +570,18 @@ class RceApiSource {
   }
 }
 
-function getSortParams(sort, order) {
+function getSortParams(sort, dir) {
   let sortBy = sort
   if (sortBy === 'date_added') {
     sortBy = 'created_at'
   } else if (sortBy === 'alphabetical') {
     sortBy = 'name'
   }
-  return `&sort=${sortBy}&order=${order}`
+  return `&sort=${sortBy}&order=${dir}`
+}
+
+export function getSearchParam(searchString) {
+  return searchString?.length >= 3 ? `&search_term=${encodeURIComponent(searchString)}` : ''
 }
 
 export default RceApiSource

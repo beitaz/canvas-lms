@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -19,6 +21,8 @@
 class LearningOutcomeGroup < ActiveRecord::Base
   include Workflow
   include MasterCourses::Restrictor
+  extend RootAccountResolver
+
   restrict_columns :state, [:workflow_state]
   self.ignored_columns = %i[migration_id_2 vendor_guid_2]
 
@@ -28,6 +32,7 @@ class LearningOutcomeGroup < ActiveRecord::Base
   belongs_to :context, polymorphic: [:account, :course]
 
   before_save :infer_defaults
+  resolves_root_account through: -> (group) { group.context_id ? group.context.resolved_root_account_id : 0 }
   validates :vendor_guid, length: { maximum: maximum_string_length, allow_nil: true }
   validates_length_of :description, :maximum => maximum_text_length, :allow_nil => true, :allow_blank => true
   validates_length_of :title, :maximum => maximum_string_length, :allow_nil => true, :allow_blank => true
@@ -182,7 +187,7 @@ class LearningOutcomeGroup < ActiveRecord::Base
       if !group && force
         group = scope.build :title => context.try(:name) || 'ROOT'
         group.building_default = true
-        Shackles.activate(:master) do
+        GuardRail.activate(:primary) do
           # during course copies/imports, observe may be disabled but import job will
           # not be aware of this lazy object creation
           ActiveRecord::Base.observers.enable LiveEventsObserver do

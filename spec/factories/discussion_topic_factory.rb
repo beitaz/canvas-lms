@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -99,5 +101,6 @@ module Factories
     @assignment.saved_by = :discussion_topic
     @topic.assignment = @assignment
     @topic.save
+    @topic
   end
 end

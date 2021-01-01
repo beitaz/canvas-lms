@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -98,11 +100,6 @@ module Pact::Canvas
       seed_users(opts)
       @mobile_courses = seed_mobile
       enable_default_developer_key!
-      enable_features
-    end
-
-    def enable_features
-     @account.enable_feature!(:student_planner)
     end
 
     def seed_course
@@ -273,6 +270,7 @@ module Pact::Canvas
       mteacher.pseudonyms.create!(unique_id: mteacher_email, password: 'password', password_confirmation: 'password', sis_user_id: "SIS_#{mteacher_name}")
       mteacher.email = mteacher_email
       mteacher.accept_terms
+      mteacher.update(pronouns: "She/Her")
       
       # The logic below will stomp @course and perhaps a few other things.  
       # We'll save them so that we can restore them later to their original value.

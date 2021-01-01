@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2016 - present Instructure, Inc.
 #
@@ -26,6 +28,7 @@ describe MasterCourses::MasterTemplate do
     it "should add a template to a course" do
       template = MasterCourses::MasterTemplate.set_as_master_course(@course)
       expect(template.course).to eq @course
+      expect(template.root_account).to eq @course.root_account
       expect(template.full_course).to eq true
 
       expect(MasterCourses::MasterTemplate.set_as_master_course(@course)).to eq template # should not create a copy

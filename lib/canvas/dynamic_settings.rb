@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -15,7 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License along
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 
-require_dependency 'fallback_memory_cache'
+require_dependency 'local_cache'
 require_dependency 'canvas/dynamic_settings/fallback_proxy'
 require_dependency 'canvas/dynamic_settings/prefix_proxy'
 require 'imperium'
@@ -29,6 +31,8 @@ module Canvas
     CONSUL_READ_OPTIONS = %i{recurse stale}.freeze
     KV_NAMESPACE = "config/canvas".freeze
     CACHE_KEY_PREFIX = "dynamic_settings/".freeze
+
+    Canvas::Reloader.on_reload { @root_fallback_proxy = nil }
 
     class << self
       attr_accessor :config, :environment
@@ -73,7 +77,7 @@ module Canvas
       end
 
       def root_fallback_proxy
-        @root_fallback_proxy ||= DynamicSettings::FallbackProxy.new(ConfigFile.load("dynamic_settings"))
+        @root_fallback_proxy ||= DynamicSettings::FallbackProxy.new(ConfigFile.load("dynamic_settings").dup)
       end
 
       # Build an object used to interacting with consul for the given
@@ -108,7 +112,8 @@ module Canvas
             cluster: cluster,
             default_ttl: default_ttl,
             kv_client: kv_client,
-            data_center: @data_center
+            data_center: @data_center,
+            query_logging: @config.fetch('query_logging', true)
           )
         else
           proxy = root_fallback_proxy

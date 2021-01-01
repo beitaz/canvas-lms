@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -148,7 +150,14 @@ class PermissionsIndex
       end
     end
 
-    # eventually add a section for the expanded permissions
+    def manage_wiki_button
+      f("button[data-testid='expand_manage_wiki']")
+    end
+
+    def expand_manage_wiki
+      scroll_to_element(manage_wiki_button)
+      manage_wiki_button.click
+    end
 
     # ---------------------- Actions ----------------------
     def choose_tab(tab_name)

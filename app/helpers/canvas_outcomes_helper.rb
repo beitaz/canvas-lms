@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2020 - present Instructure, Inc.
 #
@@ -18,11 +20,20 @@
 
 module CanvasOutcomesHelper
   def set_outcomes_alignment_js_env(artifact, context, props)
+    context =
+      case context
+      when Group then context.context
+      else context
+      end
+    # don't show for contexts without alignmments
+    return if context.learning_outcome_links.empty?
+
+    # don't show for accounts without provisioned outcomes service
     artifact_type = artifact_type_lookup(artifact)
     domain, jwt = extract_domain_jwt(context.root_account, 'outcome_alignment_sets.create')
     return if domain.nil? || jwt.nil?
 
-    _, protocol = get_host_and_protocol_from_request()
+    protocol = ENV.fetch('OUTCOMES_SERVICE_PROTOCOL', Rails.env.production? ? 'https' : 'http')
     host_url = "#{protocol}://#{domain}" if domain.present?
 
     js_env(

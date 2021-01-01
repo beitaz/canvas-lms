@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2020 - present Instructure, Inc.
 #
@@ -26,6 +28,8 @@ class UserPreferenceValue < ActiveRecord::Base
   serialize :value
   serialize :sub_key, JSON # i'm too lazy to force a distinction between integer and string/symbol keys
 
+  # this means that the preference value is no longer stored on the user object
+  # and is in it's own record in the db
   EXTERNAL = :external.freeze
 
   def self.add_user_preference(key, use_sub_keys: false)
@@ -46,6 +50,7 @@ class UserPreferenceValue < ActiveRecord::Base
   add_user_preference :gradebook_settings, use_sub_keys: true
   add_user_preference :new_user_tutorial_statuses
   add_user_preference :selected_calendar_contexts
+  add_user_preference :send_scores_in_emails_override, use_sub_keys: true
 
   def self.settings
     @preference_settings ||= {}
@@ -69,6 +74,7 @@ class UserPreferenceValue < ActiveRecord::Base
       UserPreferenceValue.settings.each do |key, settings|
         value = self.preferences[key]
         next unless value.present?
+        next if value == EXTERNAL
 
         if settings[:use_sub_keys]
           value.each do |sub_key, sub_value|
@@ -169,7 +175,7 @@ class UserPreferenceValue < ActiveRecord::Base
     # also make the other ones use global course ids
     def reorganize_gradebook_preferences
       sizes = preferences[:gradebook_column_size]
-      if sizes.present?
+      if sizes.present? && sizes != EXTERNAL
         new_sizes = {"shared" => {}}
         id_map = {}
 
@@ -218,6 +224,7 @@ class UserPreferenceValue < ActiveRecord::Base
       [:gradebook_column_order, :gradebook_settings].each do |gb_pref_key|
         current_gb_prefs = preferences[gb_pref_key]
         next unless current_gb_prefs.present?
+        next if current_gb_prefs == EXTERNAL
         new_gb_prefs = {}
         current_gb_prefs.each do |local_course_id, value|
           # we don't know exactly which shard it was set for, so just set it for them all associated shards

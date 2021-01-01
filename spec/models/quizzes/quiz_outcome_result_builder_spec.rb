@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -75,6 +77,9 @@ describe Quizzes::QuizOutcomeResultBuilder do
     it "should create learning outcome results" do
       expect(@quiz_results.size).to eql(1)
       expect(@question_results.size).to eql(2)
+    end
+    it "should have root account ids on learning outcome question results" do
+      expect(@question_results.first.root_account_id).to eq @course.root_account_id
     end
     it 'should consider scores in aggregate' do
       expect(@quiz_result.possible).to eql(2.0)

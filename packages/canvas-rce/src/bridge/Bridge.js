@@ -17,11 +17,12 @@
  */
 
 import K5Uploader from '@instructure/k5uploader'
+import {isAudioOrVideo, isImage, isVideo} from '../rce/plugins/shared/fileTypeUtils'
 
 /* eslint no-console: 0 */
 export default class Bridge {
   constructor() {
-    this.focusedEditor = null
+    this.focusedEditor = null // the RCEWrapper, not tinymce
     this.resolveEditorRendered = null
 
     this._editorRendered = new Promise(resolve => {
@@ -30,14 +31,16 @@ export default class Bridge {
 
     this.trayProps = new WeakMap()
     this._languages = []
+    this._controller = {}
+    this._uploadMediaTranslations = null
   }
 
   get editorRendered() {
     return this._editorRendered
   }
 
-  get controller() {
-    return this._controller
+  controller(editorId) {
+    return this._controller[editorId]
   }
 
   activeEditor() {
@@ -45,13 +48,21 @@ export default class Bridge {
   }
 
   focusEditor(editor) {
+    if (this.focusedEditor !== editor) {
+      this.hideTrays()
+    }
     this.focusedEditor = editor
   }
 
+  blurEditor(editor) {
+    if (this.focusedEditor === editor) {
+      this.hideTrays()
+      this.focusedEditor = null
+    }
+  }
+
   focusActiveEditor(skipFocus = false) {
-    this.getEditor()
-      .mceInstance()
-      .focus(skipFocus)
+    this.focusedEditor?.mceInstance?.()?.focus(skipFocus)
   }
 
   get mediaServerSession() {
@@ -79,6 +90,17 @@ export default class Bridge {
     this._languages = langs
   }
 
+  // we have to defer importing mediaTranslations until they are asked for
+  // or they get imported before the locale has been setup and all the strings
+  // are in English
+  get uploadMediaTranslations() {
+    if (!this._uploadMediaTranslations) {
+      const module = require('../rce/plugins/instructure_record/mediaTranslations')
+      this._uploadMediaTranslations = module.default
+    }
+    return this._uploadMediaTranslations
+  }
+
   detachEditor(editor) {
     if (editor === this.focusedEditor) {
       this.focusedEditor = null
@@ -96,16 +118,22 @@ export default class Bridge {
     }
   }
 
-  attachController(controller) {
-    this._controller = controller
+  attachController(controller, editorId) {
+    this._controller[editorId] = controller
   }
 
-  detachController() {
-    this._controller = null
+  detachController(editorId) {
+    delete this._controller[editorId]
   }
 
-  showTrayForPlugin(plugin) {
-    this._controller && this._controller.showTrayForPlugin(plugin)
+  showTrayForPlugin(plugin, editorId) {
+    this._controller[editorId]?.showTrayForPlugin(plugin)
+  }
+
+  hideTrays() {
+    Object.keys(this._controller).forEach(eid => {
+      this._controller[eid].hideTray(true)
+    })
   }
 
   existingContentToLink() {
@@ -122,7 +150,7 @@ export default class Bridge {
     return false
   }
 
-  insertLink = (link, fromTray = true) => {
+  insertLink = link => {
     if (this.focusedEditor) {
       const {selection} = this.focusedEditor.props.tinymce.get(this.focusedEditor.props.textareaId)
       link.selectionDetails = {
@@ -133,24 +161,28 @@ export default class Bridge {
         link.text = link.title || link.href
       }
       this.focusedEditor.insertLink(link)
-      if (fromTray && this.controller) {
-        this.controller.hideTray()
-      }
+      this.controller(this.focusedEditor.id)?.hideTray()
     } else {
       console.warn('clicked sidebar link without a focused editor')
     }
   }
 
-  insertFileLink = (link, fromTray = true) => {
-    return this.insertLink(link, fromTray)
+  // insertFileLink is called from the FileBrowser when All files is chosen
+  // vs the above insertLink which is called from the other CanvasContentTray panels.
+  insertFileLink = link => {
+    if (isImage(link.content_type)) {
+      return this.insertImage(link)
+    } else if (isAudioOrVideo(link.content_type)) {
+      link.embedded_iframe_url = link.embedded_iframe_url || link.href
+      return this.embedMedia(link)
+    }
+    return this.insertLink(link)
   }
 
   insertImage(image) {
     if (this.focusedEditor) {
       this.focusedEditor.insertImage(image)
-      if (this.controller) {
-        this.controller.hideTray()
-      }
+      this.controller(this.focusedEditor.id)?.hideTray()
     } else {
       console.warn('clicked sidebar image without a focused editor')
     }
@@ -158,7 +190,10 @@ export default class Bridge {
 
   insertImagePlaceholder(fileMetaProps) {
     if (this.focusedEditor) {
-      this.focusedEditor.insertImagePlaceholder(fileMetaProps)
+      // don't insert a placeholder if the user has selected content
+      if (!this.existingContentToLink()) {
+        this.focusedEditor.insertImagePlaceholder(fileMetaProps)
+      }
     } else {
       console.warn('clicked sidebar image without a focused editor')
     }
@@ -167,6 +202,15 @@ export default class Bridge {
   removePlaceholders(name) {
     if (this.focusedEditor) {
       this.focusedEditor.removePlaceholders(name)
+    }
+  }
+
+  showError(err) {
+    if (this.focusedEditor) {
+      this.focusedEditor.addAlert({
+        text: err.toString(),
+        type: 'error'
+      })
     }
   }
 
@@ -183,7 +227,7 @@ export default class Bridge {
   }
 
   embedMedia = media => {
-    if (/video/.test(media.type || media.content_type)) {
+    if (isVideo(media.type || media.content_type)) {
       this.insertVideo(media)
     } else {
       this.insertAudio(media)
@@ -197,18 +241,14 @@ export default class Bridge {
   insertVideo = video => {
     if (this.focusedEditor) {
       this.focusedEditor.insertVideo(video)
-    }
-    if (this.controller) {
-      this.controller.hideTray()
+      this.controller(this.focusedEditor.id)?.hideTray()
     }
   }
 
   insertAudio = audio => {
     if (this.focusedEditor) {
       this.focusedEditor.insertAudio(audio)
-    }
-    if (this.controller) {
-      this.controller.hideTray()
+      this.controller(this.focusedEditor.id)?.hideTray()
     }
   }
 }

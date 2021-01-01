@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2016 - present Instructure, Inc.
 #
@@ -304,6 +306,16 @@ describe AddressBook::MessageableUser do
       address_book = AddressBook::MessageableUser.new(ta)
       expect(address_book.count_in_contexts([course.asset_string])).to eql({
         course.asset_string => 3
+      })
+    end
+
+    it "returns count in an unassociated :context when an admin" do
+      sender = account_admin_user(active_all: true)
+      enrollment = student_in_course(active_all: true)
+      course = enrollment.course
+      address_book = AddressBook::MessageableUser.new(sender)
+      expect(address_book.count_in_contexts([course.asset_string])).to eql({
+        course.asset_string => 2
       })
     end
   end

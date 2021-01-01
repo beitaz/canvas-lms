@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -22,7 +24,7 @@ module UserSearch
     return User.none if search_term.strip.empty?
     SearchTermHelper.validate_search_term(search_term)
 
-    @is_id = search_term =~ Api::ID_REGEX
+    @is_id = search_term =~ Api::ID_REGEX && Api::MAX_ID_RANGE.cover?(search_term.to_i)
     @include_login = context.grants_right?(searcher, session, :view_user_logins)
     @include_email = context.grants_right?(searcher, session, :read_email_addresses)
     @include_sis   = context.grants_any_right?(searcher, session, :read_sis, :manage_sis)
@@ -126,7 +128,7 @@ module UserSearch
       if context.is_a?(Account)
         # for example, one user can have multiple teacher enrollments, but
         # we only want one such a user record in results
-        users_scope = users_scope.joins(:enrollments).merge(Enrollment.active.where(type: enrollment_types)).distinct
+        users_scope = users_scope.where("EXISTS (?)", Enrollment.where("enrollments.user_id=users.id").active.where(type: enrollment_types)).distinct
       else
         if context.is_a?(Group) && context.context_type == "Course"
           users_scope = users_scope.joins(:enrollments).where(:enrollments => {:course_id => context.context_id})

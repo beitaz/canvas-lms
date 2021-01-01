@@ -44,7 +44,7 @@ let lastAnswerSelected = null
 let lastSuccessfulSubmissionData = null
 let showDeauthorizedDialog
 
-var quizSubmission = (function() {
+const quizSubmission = (function() {
   let timeMod = 0,
     endAt = $('.end_at'),
     endAtParsed = endAt.text() && new Date(endAt.text()),
@@ -55,6 +55,11 @@ var quizSubmission = (function() {
     $countdownSeconds = $('.countdown_seconds'),
     $timeRunningTimeRemaining = $('.time_running,.time_remaining'),
     $lastSaved = $('#last_saved_indicator')
+  const $timerAutosubmitDisabled = $('.timer_autosubmit_disabled'),
+    timerAutosubmitDisabledParsed = $timerAutosubmitDisabled.text() === 'true',
+    $endAtWithoutTimeLimit = $('.end_at_without_time_limit'),
+    endAtWithoutTimeLimitParsed =
+      $endAtWithoutTimeLimit.text() && new Date($endAtWithoutTimeLimit.text())
   // $('.time_running,.time_remaining') is probably not yet loaded at the time
   const $timeRunningFunc = function() {
     if ($timeRunningTimeRemaining.length > 0) return $timeRunningTimeRemaining
@@ -73,6 +78,10 @@ var quizSubmission = (function() {
     currentlyBackingUp: false,
     endAt,
     endAtParsed,
+    timerAutosubmitDisabledParsed,
+    endAtWithoutTimeLimitParsed,
+    timeToEndWithoutTimeLimit:
+      endAtWithoutTimeLimitParsed && endAtWithoutTimeLimitParsed - new Date(),
     startedAt,
     hasTimeLimit: !!ENV.QUIZ.time_limit,
     timeLeft: parseInt($('.time_left').text()) * 1000,
@@ -91,10 +100,14 @@ var quizSubmission = (function() {
        * This is required to test updating questions via the API.
        */
       if (quizSubmission.backupsDisabled) {
+        console.log('[updateSubmission] Aborting because backups are disabled')
         return
       }
 
       if (quizSubmission.submitting && !repeat) {
+        console.log(
+          '[updateSubmission] Aborting because submission is in process and repeat is disabled'
+        )
         return
       }
       const now = new Date()
@@ -102,6 +115,7 @@ var quizSubmission = (function() {
         return
       }
       if (quizSubmission.currentlyBackingUp) {
+        console.log('[updateSubmission] Aborting because submission is currently being backed up')
         return
       }
 
@@ -177,6 +191,12 @@ var quizSubmission = (function() {
                 quizSubmission.endAtParsed = endAtFromServer
               }
             }
+            // if timer autosubmission is disabled, we need to know when the fallback autosubmission time is
+            if (data && data.end_at_without_time_limit) {
+              quizSubmission.endAtWithoutTimeLimitParsed = Date.parse(
+                data.end_at_without_time_limit
+              )
+            }
           },
           // Error callback
           (resp, ec) => {
@@ -191,6 +211,9 @@ var quizSubmission = (function() {
               if ($.inArray(ec, $.ajaxJSON.ignoredXHRs) === -1) {
                 $.ajaxJSON.ignoredXHRs.push(ec)
               }
+            } else if (ec.status === 403 || resp.status == 'forbidden') {
+              // Something has been malaligned and we now need ruby to figure out where we should be
+              window.location.reload()
             } else {
               // Connectivity lost?
               const current_user_id = window.ENV.current_user_id || 'none'
@@ -252,7 +275,7 @@ var quizSubmission = (function() {
           $countdownSeconds.text(s)
         }
 
-        if (s <= 0 && !quizSubmission.submitting) {
+        if (s <= 0 && !quizSubmission.submitting && quizSubmission.shouldSubmitAtEndAt()) {
           quizSubmission.submitting = true
           quizSubmission.submitQuiz()
         }
@@ -269,6 +292,31 @@ var quizSubmission = (function() {
         quizSubmission.showWarnings(currentTimeLeft)
       }
       quizSubmission.updateTimeDisplay(currentTimeLeft)
+
+      // if timer autosubmission is disabled, as a fallback we still autosubmit at the next end_at time
+      if (quizSubmission.endAtWithoutTimeLimitParsed) {
+        quizSubmission.timeToEndWithoutTimeLimit -= quizSubmission.clockInterval
+      }
+      if (
+        quizSubmission.timerAutosubmitDisabledParsed &&
+        !!quizSubmission.endAtWithoutTimeLimitParsed &&
+        quizSubmission.endAtWithoutTimeLimitParsed.getTime() !==
+          quizSubmission.endAtParsed.getTime() &&
+        quizSubmission.timeToEndWithoutTimeLimit < 1000 &&
+        !quizSubmission.submitting
+      ) {
+        quizSubmission.submitting = true
+        quizSubmission.submitQuiz()
+      }
+    },
+
+    shouldSubmitAtEndAt() {
+      return (
+        !quizSubmission.timerAutosubmitDisabledParsed ||
+        (!!quizSubmission.endAtWithoutTimeLimitParsed &&
+          quizSubmission.endAtWithoutTimeLimitParsed.getTime() ===
+            quizSubmission.endAtParsed.getTime())
+      )
     },
 
     floorTimeLeft(timeLeft) {
@@ -373,7 +421,7 @@ var quizSubmission = (function() {
             opacity: 0.7
           },
           close() {
-            if (!quizSubmission.submitting) {
+            if (!quizSubmission.submitting && quizSubmission.shouldSubmitAtEndAt()) {
               quizSubmission.submitting = true
               quizSubmission.submitQuiz()
             }
@@ -404,6 +452,20 @@ var quizSubmission = (function() {
       const hr = date.getUTCHours()
       const min = date.getUTCMinutes()
       const sec = date.getUTCSeconds()
+      // Only checking min and sec since those are the only two forced to always display.
+      // Plus, it's most likely either none of these will be NaN, or they all will be.
+      if (Number.isNaN(Number(min)) || Number.isNaN(Number(sec))) {
+        // display a helpful message instead of a NaN time
+        $('.time_header').hide()
+        $('.hide_time_link').hide()
+        $('.time_running').css('color', '#EA0611')
+        $timeRunningFunc().text(
+          I18n.t(
+            "Your browser connectivity may be slow or unstable. In spite of your browser's timer being disconnected, your answers will be recorded for an additional 5 minutes beyond the original time limit on this attempt."
+          )
+        )
+        return
+      }
       const times = []
       if (yr) {
         times.push(I18n.t('years_count', 'Year', {count: yr}))
@@ -465,7 +527,9 @@ var quizSubmission = (function() {
         .removeClass(removeClass)
     },
     submitQuiz() {
-      const action = $('#submit_quiz_button').data('action')
+      const button = $('#submit_quiz_button')
+      button.prop('disabled', true)
+      const action = button.data('action')
       $('#submit_quiz_form')
         .attr('action', action)
         .submit()
@@ -554,6 +618,10 @@ $(function() {
 
       if ($(this).hasClass('no-warning')) {
         quizSubmission.alreadyAcceptedNavigatingAway = true
+        return
+      }
+
+      if ($(this).hasClass('file_preview_link')) {
         return
       }
 
@@ -658,7 +726,11 @@ $(function() {
       }
       if ($this.hasClass('precision_question_input')) {
         var val = numberHelper.parse($this.val())
-        $this.val(isNaN(val) ? '' : I18n.n(val.toPrecision(16), {strip_insignificant_zeros: true}))
+        $this.val(
+          isNaN(val)
+            ? ''
+            : I18n.n(val.toPrecision(16), {strip_insignificant_zeros: true, precision: 16})
+        )
       }
       if (update !== false) {
         quizSubmission.updateSubmission()
